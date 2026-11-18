@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/calen-core", "crates/calen-store", "crates/calen-sync", "crates/calen-images", "app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+calen-core = { path = "crates/calen-core" }
+calen-store = { path = "crates/calen-store" }
+calen-sync = { path = "crates/calen-sync" }
+calen-images = { path = "crates/calen-images" }
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+rrule = "0.14"
+regex = "1"
+uuid = { version = "1", features = ["v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "fs"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "multipart", "json", "stream"] }
+quick-xml = "0.42"
+rusqlite = { version = "0.43", features = ["bundled"] }
+directories = "6"
+log = "0.4"
+env_logger = "0.11"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

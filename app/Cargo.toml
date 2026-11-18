@@ -1,0 +1,48 @@
+[package]
+name = "calen"
+version.workspace = true
+edition.workspace = true
+description = "A fast native calendar that lives in your tray"
+
+[[bin]]
+name = "calen"
+path = "src/main.rs"
+
+[dependencies]
+calen-core.workspace = true
+calen-store.workspace = true
+calen-sync.workspace = true
+calen-images.workspace = true
+keyring = "4"
+nucleo-matcher = "0.3"
+rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
+reqwest.workspace = true
+serde_json.workspace = true
+minisign-verify = "0.2"
+sha2 = "0.10"
+self-replace = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+iced = { version = "0.14", features = ["canvas", "image", "svg", "tokio", "advanced", "lazy"] }
+chrono.workspace = true
+directories.workspace = true
+log.workspace = true
+env_logger.workspace = true
+serde.workspace = true
+tokio.workspace = true
+open = "5"
+auto-launch = "0.6"
+futures = "0.3"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+tray-icon = "0.26"
+windows-sys = { version = "0.61", features = ["Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Foundation", "Win32_Graphics_Gdi"] }
+tauri-winrt-notification = "0.7"
+winreg = "0.55"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", features = ["blocking"] }
+notify-rust = "4"
+zbus = "5"

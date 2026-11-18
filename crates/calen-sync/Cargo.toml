@@ -1,0 +1,18 @@
+[package]
+name = "calen-sync"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+calen-core.workspace = true
+calen-store.workspace = true
+reqwest.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true
+log.workspace = true
+tokio.workspace = true
+keyring = "4"
+
+[dev-dependencies]
+tokio = { workspace = true }
+chrono.workspace = true

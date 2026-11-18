@@ -1,0 +1,13 @@
+[package]
+name = "calen-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+rrule.workspace = true
+regex.workspace = true
+uuid.workspace = true
+serde.workspace = true
+iana-time-zone = "0.1"

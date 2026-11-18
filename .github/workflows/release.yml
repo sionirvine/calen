@@ -1,0 +1,102 @@
+name: Release
+
+# Push a tag like v0.2.0 to build Windows + Linux binaries and publish a GitHub release.
+# The app checks this repository's latest release and self-updates on next restart.
+#
+# Optional signing (recommended):
+#   minisign -G -p calen.pub -s calen.key      (once, locally)
+#   repo secret   MINISIGN_KEY      = contents of calen.key
+#   repo secret   MINISIGN_PASSWORD = its password
+#   repo variable CALEN_UPDATE_PUBKEY = the base64 line of calen.pub (second line)
+# Without these, updates are verified with SHA-256 checksums from the release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CALEN_GITHUB_REPO: ${{ github.repository }}
+  CALEN_UPDATE_PUBKEY: ${{ vars.CALEN_UPDATE_PUBKEY }}
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p calen
+      - shell: bash
+        run: |
+          mkdir dist
+          cp target/release/calen.exe dist/calen-windows-x86_64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*
+
+  linux:
+    runs-on: ubuntu-22.04 # older glibc → runs on Debian stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev libvulkan-dev libfuse2 file
+      - run: cargo build --release -p calen
+      - name: Package AppImage
+        run: |
+          set -e
+          mkdir -p AppDir/usr/bin AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/calen AppDir/usr/bin/calen
+          cp packaging/linux/calen.desktop AppDir/usr/share/applications/calen.desktop
+          cp assets/calen.png AppDir/usr/share/icons/hicolor/256x256/apps/calen.png
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            --desktop-file packaging/linux/calen.desktop \
+            --icon-file assets/calen.png \
+            --output appimage
+          mkdir dist
+          mv Calen*.AppImage dist/Calen-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*
+
+  publish:
+    needs: [windows, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          for f in *; do sha256sum "$f" | cut -d' ' -f1 > "$f.sha256"; done
+      - name: Sign (minisign)
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        if: env.MINISIGN_KEY != ''
+        run: |
+          sudo apt-get install -y minisign
+          echo "$MINISIGN_KEY" > /tmp/calen.key
+          cd dist
+          for f in calen-windows-x86_64.exe Calen-x86_64.AppImage; do
+            echo "$MINISIGN_PASSWORD" | minisign -S -s /tmp/calen.key -m "$f"
+          done
+          rm /tmp/calen.key
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

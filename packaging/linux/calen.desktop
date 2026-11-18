@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Calen
+GenericName=Calendar
+Comment=A fast calendar that lives in your tray
+Exec=calen
+Icon=calen
+Terminal=false
+Categories=Office;Calendar;
+StartupWMClass=calen
