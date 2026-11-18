@@ -32,12 +32,14 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 - **Map links.** A Google Maps link becomes a clickable place name. Calen saves it as
   standard `LOCATION` + `GEO` + `X-APPLE-STRUCTURED-LOCATION`, so iOS/macOS Calendar
   shows the map too.
-- **Images per event.** Drop image files onto an event (or use *Add image*). They upload
-  to img.felixadr.com and are stored in the notes as a plain-link block, plus standard
+- **Images per event (optional).** Uploads are off until you pick a host:
+  img.felixadr.com, ImgBB, or your own S3-compatible bucket (AWS S3, Cloudflare R2,
+  MinIO, Backblaze B2, Wasabi…). Drop image files onto an event (or use *Add image*);
+  the links are stored in the notes as a plain-link block, plus standard
   `ATTACH` properties, so every other client still sees clickable links:
   ```
   📷 Images (calen)
-  https://img.felixadr.com/i/…
+  https://…/photo.jpg
   ```
   Calen shows them as thumbnails. Click one to open a viewer: scroll to zoom, drag to
   pan, ←/→ to move between images.
@@ -76,9 +78,18 @@ sudo apt install build-essential pkg-config libdbus-1-dev libxkbcommon-dev libwa
 On GNOME, the tray needs the AppIndicator extension (`gnome-shell-extension-appindicator`
 on Debian). KDE supports it natively.
 
-**Image uploads.** Set the API key in the app: `Ctrl+P` → `> Image upload: set API key`.
-It is stored in the OS keyring. Debug builds also read `IMG_API_KEY` from `.env`. The key
-is never compiled into the binary.
+**Image uploads** (optional): `Ctrl+P` → `> Image storage: set up uploads…`.
+
+| Host | You need |
+|---|---|
+| img.felixadr.com | API key (`imk_…`) |
+| ImgBB | API key from api.imgbb.com |
+| S3-compatible | Endpoint, bucket, region, access key ID + secret. Optional key prefix, a public URL (CDN / custom domain / R2 `pub-….r2.dev`), path-style URLs (MinIO) and a public-read ACL |
+
+**Test upload** in the dialog checks that the bucket accepts uploads *and* that the
+resulting link is publicly readable, since other calendar apps open the links without
+credentials. Keys and secrets are stored in the OS keyring, never in the settings file
+or the binary. Debug builds also read `IMG_API_KEY` from `.env` for img.felixadr.com.
 
 **CalDAV.** Click *Connect calendar* in the toolbar. For Nextcloud, use an app password
 (Settings → Security → Devices & sessions). Passwords are stored in the OS keyring.
@@ -87,6 +98,7 @@ To run the end-to-end sync test against a server:
 
 ```bash
 CALEN_TEST_DAV="http://127.0.0.1:5232/,user,pass" cargo test -p calen-sync --test live_server
+CALEN_TEST_S3="http://127.0.0.1:9000,bucket,key,secret" cargo test -p calen-images --test live_s3
 ```
 
 ## Releases and updates
@@ -107,6 +119,6 @@ update themselves.
 crates/calen-core    ICS parse/write (lossless), events, recurrence, quick-add parser, link detection, image notes block
 crates/calen-store   SQLite cache + pending-ops queue + settings
 crates/calen-sync    CalDAV client and sync engine
-crates/calen-images  img.felixadr.com client, thumbnails
+crates/calen-images  image hosts (img.felixadr.com, ImgBB, S3 SigV4), thumbnails
 app/                 iced UI, tray/notifications/DND per OS (app/src/platform), updater
 ```

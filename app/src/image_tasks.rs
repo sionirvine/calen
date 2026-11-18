@@ -6,50 +6,11 @@ use std::path::PathBuf;
 
 use crate::app::{App, Message};
 
-const KEYRING_SERVICE: &str = "calen-image-api";
-const KEYRING_USER: &str = "default";
-
 #[derive(Debug, Clone)]
 pub enum ImageMsg {
     Picked(Vec<PathBuf>),
     Uploaded { count: usize, result: Result<Vec<String>, String> },
     Thumb(String, Result<calen_images::Rgba, String>),
-}
-
-/// API key from the OS keyring; in debug builds also `IMG_API_KEY` / `.env` (never compiled in).
-pub fn api_key() -> Option<String> {
-    if let Ok(k) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).and_then(|e| e.get_password())
-        && !k.is_empty()
-    {
-        return Some(k);
-    }
-    if cfg!(debug_assertions) {
-        if let Ok(k) = std::env::var("IMG_API_KEY") {
-            return Some(k);
-        }
-        if let Ok(env) = std::fs::read_to_string(".env") {
-            for line in env.lines() {
-                if let Some(v) = line.trim().strip_prefix("IMG_API_KEY=") {
-                    return Some(v.trim().trim_matches('"').to_string());
-                }
-            }
-        }
-    }
-    None
-}
-
-pub fn has_api_key() -> bool {
-    api_key().is_some()
-}
-
-pub fn save_api_key(key: &str) -> Result<(), String> {
-    let e = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER).map_err(|e| e.to_string())?;
-    if key.is_empty() {
-        let _ = e.delete_credential();
-        Ok(())
-    } else {
-        e.set_password(key).map_err(|e| e.to_string())
-    }
 }
 
 fn cache_dir(app: &App) -> PathBuf {
@@ -81,6 +42,10 @@ pub fn files_dropped(app: &mut App, paths: Vec<PathBuf>) -> Task<Message> {
         app.flash("Only image files can be attached");
         return Task::none();
     }
+    if !crate::storage::enabled(app) {
+        app.flash("Image uploads are off — choose where to store images first");
+        return crate::storage::open(app);
+    }
     // Drop onto the open editor, or onto the selected event (opens its editor).
     if app.editor.is_none() {
         let Some(key) = app.selected.clone() else {
@@ -97,7 +62,10 @@ pub fn files_dropped(app: &mut App, paths: Vec<PathBuf>) -> Task<Message> {
     update(app, ImageMsg::Picked(images))
 }
 
-pub fn pick_images(_app: &mut App) -> Task<Message> {
+pub fn pick_images(app: &mut App) -> Task<Message> {
+    if !crate::storage::enabled(app) {
+        return crate::storage::open(app);
+    }
     Task::perform(
         async {
             rfd::AsyncFileDialog::new()
@@ -118,24 +86,20 @@ pub fn update(app: &mut App, msg: ImageMsg) -> Task<Message> {
             if files.is_empty() {
                 return Task::none();
             }
-            let Some(key) = api_key() else {
-                app.flash("Set the image API key first: Ctrl+P → > Image upload: set API key");
-                return Task::none();
+            let provider = match crate::storage::provider(app) {
+                Ok(p) => p,
+                Err(e) => {
+                    app.flash(e);
+                    return crate::storage::open(app);
+                }
             };
             let Some(ed) = &mut app.editor else { return Task::none() };
             let count = files.len();
             ed.uploading += count;
             let title = if ed.title.trim().is_empty() { "Calendar event".to_string() } else { ed.title.trim().to_string() };
-            let public = app.settings.image_public;
-            Task::perform(
-                async move {
-                    calen_images::upload(&key, &files, &title, public)
-                        .await
-                        .map(|(_, imgs)| imgs.into_iter().map(|i| i.url).collect::<Vec<_>>())
-                        .map_err(|e| e.to_string())
-                },
-                move |result| Message::Images(ImageMsg::Uploaded { count, result }),
-            )
+            Task::perform(async move { provider.upload(&files, &title).await.map_err(|e| e.to_string()) }, move |result| {
+                Message::Images(ImageMsg::Uploaded { count, result })
+            })
         }
         ImageMsg::Uploaded { count, result } => {
             let Some(ed) = &mut app.editor else {

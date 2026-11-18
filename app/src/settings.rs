@@ -19,6 +19,49 @@ pub enum ViewKind {
     Month,
 }
 
+/// Where attached images are uploaded. Off by default (uploads are optional).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ImageHost {
+    #[default]
+    Off,
+    Felix,
+    ImgBB,
+    S3,
+}
+
+impl ImageHost {
+    pub const ALL: [ImageHost; 4] = [ImageHost::Off, ImageHost::Felix, ImageHost::ImgBB, ImageHost::S3];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageHost::Off => "Off",
+            ImageHost::Felix => "img.felixadr.com",
+            ImageHost::ImgBB => "ImgBB",
+            ImageHost::S3 => "S3-compatible storage",
+        }
+    }
+}
+
+impl std::fmt::Display for ImageHost {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Non-secret S3 settings (the secret key lives in the OS keyring).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct S3Settings {
+    pub endpoint: String,
+    pub region: String,
+    pub bucket: String,
+    pub access_key_id: String,
+    pub prefix: String,
+    pub public_base_url: String,
+    pub path_style: bool,
+    pub public_acl: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -37,6 +80,8 @@ pub struct Settings {
     pub dnd_until: Option<i64>,
     pub respect_system_dnd: bool,
     pub image_public: bool,
+    pub image_host: ImageHost,
+    pub s3: S3Settings,
     pub sidebar_visible: bool,
     pub view: ViewKind,
     pub first_run_done: bool,
@@ -60,6 +105,8 @@ impl Default for Settings {
             dnd_until: None,
             respect_system_dnd: true,
             image_public: true,
+            image_host: ImageHost::Off,
+            s3: S3Settings::default(),
             sidebar_visible: true,
             view: ViewKind::Week,
             first_run_done: false,

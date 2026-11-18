@@ -378,7 +378,14 @@ impl Editor {
         }
     }
 
-    pub fn view<'a>(&'a self, p: Palette, calendars: Vec<CalChoice>, cache: &'a ImageCache, drop_hover: bool) -> Element<'a, Msg> {
+    pub fn view<'a>(
+        &'a self,
+        p: Palette,
+        calendars: Vec<CalChoice>,
+        cache: &'a ImageCache,
+        drop_hover: bool,
+        uploads: bool,
+    ) -> Element<'a, Msg> {
         let label =
             |s: &'static str| text(s).size(13).color(p.muted).width(Length::Fixed(72.0)).align_x(iced::alignment::Horizontal::Right);
         let title = text_input("New event", &self.title)
@@ -533,7 +540,15 @@ impl Editor {
         let add_btn = button(
             row![
                 icons::icon(icons::image(), 14.0, p.muted),
-                text(if drop_hover { "Drop to attach" } else { "Add image" }).size(12).color(p.muted)
+                text(if !uploads {
+                    "Set up image uploads…"
+                } else if drop_hover {
+                    "Drop to attach"
+                } else {
+                    "Add image"
+                })
+                .size(12)
+                .color(p.muted)
             ]
             .spacing(6)
             .align_y(Alignment::Center),
