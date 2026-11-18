@@ -1,4 +1,8 @@
-//! Client for the img.felixadr.com image API + local thumbnail cache.
+//! Image hosting for event attachments + local thumbnail cache.
+//!
+//! Providers: img.felixadr.com, ImgBB, or any S3-compatible bucket ([`Provider`]).
+//!
+//! img.felixadr.com API notes:
 //!
 //! API (Bearer token):
 //! - `POST /api/v1/posts` multipart `file` (repeatable), `title`, `tags`, `public` → post JSON
@@ -7,6 +11,11 @@
 //!
 //! Thumbnails served by the API are AVIF only, so we fetch the full image as
 //! JPEG/PNG/WebP (content negotiation) and downscale locally.
+
+pub mod imgbb;
+pub mod s3;
+
+pub use s3::S3Config;
 
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
@@ -66,7 +75,7 @@ pub fn is_image_path(p: &Path) -> bool {
     p.extension().and_then(|e| e.to_str()).is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
-fn http() -> reqwest::Client {
+pub(crate) fn http() -> reqwest::Client {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .connect_timeout(Duration::from_secs(10))
@@ -75,7 +84,7 @@ fn http() -> reqwest::Client {
         .expect("http client")
 }
 
-fn mime_for(p: &Path) -> &'static str {
+pub(crate) fn mime_for(p: &Path) -> &'static str {
     match p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("png") => "image/png",
@@ -89,7 +98,7 @@ fn mime_for(p: &Path) -> &'static str {
     }
 }
 
-async fn file_part(path: &Path) -> Result<Part, ImageError> {
+pub(crate) async fn file_part(path: &Path) -> Result<Part, ImageError> {
     let bytes = tokio::fs::read(path).await?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "image".into());
     Part::bytes(bytes).file_name(name).mime_str(mime_for(path)).map_err(|e| ImageError::Api(e.to_string()))
@@ -111,6 +120,48 @@ async fn parse_response(resp: reqwest::Response) -> Result<Vec<RemoteImage>, Ima
         PostResponse::Plain(post) => post.images,
         PostResponse::Images { images } => images,
     })
+}
+
+/// Where uploaded images go.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Provider {
+    /// img.felixadr.com (Bearer API key).
+    Felix { key: String, public: bool },
+    /// ImgBB (API key from https://api.imgbb.com).
+    ImgBB { key: String },
+    /// Your own S3-compatible bucket.
+    S3(S3Config),
+}
+
+impl Provider {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Provider::Felix { .. } => "img.felixadr.com",
+            Provider::ImgBB { .. } => "ImgBB",
+            Provider::S3(_) => "S3",
+        }
+    }
+
+    /// Upload files; returns one public URL per file, in order.
+    pub async fn upload(&self, files: &[PathBuf], title: &str) -> Result<Vec<String>, ImageError> {
+        match self {
+            Provider::Felix { key, public } => Ok(upload(key, files, title, *public).await?.1.into_iter().map(|i| i.url).collect()),
+            Provider::ImgBB { key } => {
+                let mut out = Vec::new();
+                for f in files {
+                    out.push(imgbb::upload(key, f, title).await?);
+                }
+                Ok(out)
+            }
+            Provider::S3(cfg) => {
+                let mut out = Vec::new();
+                for f in files {
+                    out.push(s3::put_file(cfg, f).await?);
+                }
+                Ok(out)
+            }
+        }
+    }
 }
 
 /// Upload files as one new post. Returns the stored images (in order).
@@ -192,6 +243,11 @@ fn decode(bytes: &[u8]) -> Result<image::DynamicImage, ImageError> {
     image::load_from_memory(bytes).map_err(|e| ImageError::Decode(e.to_string()))
 }
 
+/// Downscale to fit the thumbnail box; never upscale small images.
+fn shrink(img: image::DynamicImage) -> image::DynamicImage {
+    if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE { img.thumbnail(THUMB_SIZE, THUMB_SIZE) } else { img }
+}
+
 fn to_rgba(img: image::DynamicImage) -> Rgba {
     let rgba = img.into_rgba8();
     Rgba { width: rgba.width(), height: rgba.height(), pixels: rgba.into_raw() }
@@ -206,11 +262,9 @@ pub async fn thumbnail(url: &str, cache_dir: &Path) -> Result<Rgba, ImageError> 
         return Ok(to_rgba(img));
     }
     let bytes = download(url).await?;
-    let thumb = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, ImageError> {
-        Ok(decode(&bytes)?.thumbnail(THUMB_SIZE, THUMB_SIZE))
-    })
-    .await
-    .map_err(|e| ImageError::Decode(e.to_string()))??;
+    let thumb = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, ImageError> { Ok(shrink(decode(&bytes)?)) })
+        .await
+        .map_err(|e| ImageError::Decode(e.to_string()))??;
     let _ = tokio::fs::create_dir_all(cache_dir).await;
     let mut png = Vec::new();
     if thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok() {
@@ -235,7 +289,7 @@ pub async fn full(url: &str) -> Result<Rgba, ImageError> {
 pub async fn local_thumbnail(path: PathBuf) -> Result<Rgba, ImageError> {
     tokio::task::spawn_blocking(move || {
         let bytes = std::fs::read(&path)?;
-        Ok(to_rgba(decode(&bytes)?.thumbnail(THUMB_SIZE, THUMB_SIZE)))
+        Ok(to_rgba(shrink(decode(&bytes)?)))
     })
     .await
     .map_err(|e| ImageError::Decode(e.to_string()))?

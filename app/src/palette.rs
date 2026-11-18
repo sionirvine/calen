@@ -39,8 +39,8 @@ pub enum Command {
     SyncNow,
     AddAccount,
     RemoveAccount(i64),
-    ImageApiKey,
-    ImagePublic(bool),
+    ImageStorage,
+    ImageUploadsOff,
     CheckUpdates,
     AutoUpdate(bool),
     NewEvent,
@@ -61,15 +61,9 @@ pub enum Msg {
     Close,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum PromptKind {
-    ImageApiKey,
-}
-
 pub struct PaletteState {
     pub query: String,
     pub selected: usize,
-    prompt: Option<PromptKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -84,7 +78,7 @@ pub fn is_open(app: &App) -> bool {
 
 pub fn open(app: &mut App, prefix: &str) -> Task<Message> {
     app.quick = None;
-    app.palette_state = Some(PaletteState { query: prefix.to_string(), selected: 0, prompt: None });
+    app.palette_state = Some(PaletteState { query: prefix.to_string(), selected: 0 });
     Task::batch([app.open_main(), operation::focus(INPUT_ID), operation::move_cursor_to_end(INPUT_ID)])
 }
 
@@ -142,16 +136,7 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
         (Command::WeekStart(5), "Week starts on Saturday".into(), current(s.week_start == 5)),
         (Command::DateOrder(DateOrder::DayMonth), "Typed dates: day/month (18/11)".into(), current(s.date_order == DateOrder::DayMonth)),
         (Command::DateOrder(DateOrder::MonthDay), "Typed dates: month/day (11/18)".into(), current(s.date_order == DateOrder::MonthDay)),
-        (
-            Command::ImageApiKey,
-            "Image upload: set API key…".into(),
-            if crate::image_tasks::has_api_key() { "Key saved".into() } else { "Not set".into() },
-        ),
-        (
-            Command::ImagePublic(!s.image_public),
-            format!("Image upload: make images {}", if s.image_public { "private" } else { "public" }),
-            format!("Currently {}", if s.image_public { "public (links open in other apps)" } else { "private" }),
-        ),
+        (Command::ImageStorage, "Image storage: set up uploads…".into(), format!("Currently: {}", s.image_host.label())),
         (Command::CheckUpdates, "Check for updates".into(), format!("Version {}", env!("CARGO_PKG_VERSION"))),
         (
             Command::AutoUpdate(!s.auto_update),
@@ -161,6 +146,9 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
         (Command::Shortcuts, "Keyboard shortcuts".into(), String::new()),
         (Command::Quit, "Quit Calen".into(), String::new()),
     ];
+    if s.image_host != crate::settings::ImageHost::Off {
+        v.push((Command::ImageUploadsOff, "Image storage: turn uploads off".into(), String::new()));
+    }
     for m in [None, Some(0), Some(5), Some(10), Some(15), Some(30), Some(60)] {
         let label = match m {
             None => "none".to_string(),
@@ -288,15 +276,6 @@ pub fn update(app: &mut App, m: Msg) -> Task<Message> {
         }
         Msg::Submit => {
             let Some(st) = &app.palette_state else { return Task::none() };
-            if let Some(PromptKind::ImageApiKey) = st.prompt {
-                let key = st.query.trim().to_string();
-                app.palette_state = None;
-                match crate::image_tasks::save_api_key(&key) {
-                    Ok(()) => app.flash(if key.is_empty() { "Image API key removed" } else { "Image API key saved" }),
-                    Err(e) => app.flash(format!("Couldn't save the key: {e}")),
-                }
-                return Task::none();
-            }
             let list = items(app, st);
             let Some(item) = list.get(st.selected.min(list.len().saturating_sub(1))).cloned() else { return Task::none() };
             match item {
@@ -375,11 +354,11 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
                 app.sync.status = crate::sync_hook::Status::NoAccount;
             }
         }
-        Command::ImageApiKey => {
-            app.palette_state = Some(PaletteState { query: String::new(), selected: 0, prompt: Some(PromptKind::ImageApiKey) });
-            return Task::batch([operation::focus(INPUT_ID)]);
+        Command::ImageStorage => return crate::storage::open(app),
+        Command::ImageUploadsOff => {
+            crate::storage::turn_off(app);
+            return Task::none();
         }
-        Command::ImagePublic(b) => s.image_public = b,
         Command::CheckUpdates => task = Task::done(Message::Update(crate::updater::UpdateMsg::Check { manual: true })),
         Command::AutoUpdate(b) => s.auto_update = b,
         Command::NewEvent => task = Task::done(Message::OpenQuickAdd(None)),
@@ -420,15 +399,10 @@ pub fn on_key(app: &mut App, key: &Key, _mods: Modifiers) -> Option<Task<Message
 pub fn view<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
     let st = app.palette_state.as_ref()?;
     let bold = Font { weight: font::Weight::Semibold, ..Font::DEFAULT };
-    let (placeholder, secure) = match st.prompt {
-        Some(PromptKind::ImageApiKey) => ("Paste the img.felixadr.com API key (imk_…) and press Enter", true),
-        None => ("Search events…  (type > for commands & settings)", false),
-    };
-    let input = text_input(placeholder, &st.query)
+    let input = text_input("Search events…  (type > for commands & settings)", &st.query)
         .id(iced::widget::Id::new(INPUT_ID))
         .on_input(|q| Message::Palette(Msg::Query(q)))
         .on_submit(Message::Palette(Msg::Submit))
-        .secure(secure)
         .size(16)
         .padding([6, 2])
         .style(theme::bare_input);
@@ -437,7 +411,7 @@ pub fn view<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
         .align_y(Alignment::Center);
 
     let mut list = column![].spacing(1);
-    if st.prompt.is_none() {
+    {
         let its = items(app, st);
         let sel = st.selected.min(its.len().saturating_sub(1));
         if its.is_empty() {
@@ -481,12 +455,7 @@ pub fn view<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
             );
         }
     }
-    let hint = text(match st.prompt {
-        Some(_) => "Enter to save · Esc to cancel",
-        None => "↑↓ to move · Enter to open · Esc to close",
-    })
-    .size(11)
-    .color(p.faint);
+    let hint = text("↑↓ to move · Enter to open · Esc to close").size(11).color(p.faint);
     Some(
         container(
             column![

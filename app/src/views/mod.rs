@@ -145,11 +145,14 @@ fn main_window(app: &App) -> Element<'_, Message> {
         layers.push(modal(quick_add(app, q, p), Message::CloseOverlay, false));
     }
     if let Some(ed) = &app.editor {
-        let card = ed.view(p, app.calendar_choices(), &app.images, app.drop_hover).map(Message::Editor);
+        let card = ed.view(p, app.calendar_choices(), &app.images, app.drop_hover, crate::storage::enabled(app)).map(Message::Editor);
         layers.push(modal(card, Message::CloseOverlay, true));
     }
     if let Some(pc) = &app.scope_prompt {
         layers.push(modal(scope_prompt(&pc.title, matches!(pc.change, crate::edit::Change::Delete), p), Message::ScopeChosen(None), true));
+    }
+    if let Some(el) = crate::storage::view(app, p) {
+        layers.push(modal(el, Message::Storage(crate::storage::StorageMsg::Close), true));
     }
     if let Some(el) = crate::sync_hook::dialog(app, p) {
         layers.push(modal(el, Message::Sync(crate::sync_hook::SyncMsg::CloseDialog), true));

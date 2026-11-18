@@ -11,3 +11,10 @@ thiserror.workspace = true
 log.workspace = true
 tokio.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif", "bmp"] }
+hmac = "0.12"
+sha2 = "0.10"
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

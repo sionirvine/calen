@@ -12,6 +12,7 @@ mod palette;
 mod platform;
 mod seed;
 mod settings;
+mod storage;
 mod sync_hook;
 mod theme;
 mod updater;

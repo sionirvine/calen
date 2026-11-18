@@ -59,6 +59,7 @@ pub enum Message {
     Images(crate::image_tasks::ImageMsg),
     Viewer(crate::viewer::ViewerMsg),
     FlyoutNew,
+    Storage(crate::storage::StorageMsg),
     ScrollMorning,
     CloseShortcuts,
     // windows
@@ -120,6 +121,7 @@ pub struct App {
     pub notify: crate::notify::NotifyState,
     pub updater: crate::updater::UpdaterState,
     pub viewer: Option<crate::viewer::Viewer>,
+    pub storage: Option<crate::storage::StorageDialog>,
 }
 
 pub struct Flags {
@@ -170,6 +172,7 @@ impl App {
             notify: Default::default(),
             updater: Default::default(),
             viewer: None,
+            storage: None,
         };
         app.refresh_occurrences(true);
         let task = if flags.start_minimized { Task::none() } else { app.open_main() };
@@ -694,6 +697,7 @@ impl App {
             Message::CloseOverlay => {
                 // Close the top-most overlay; with none open, clear the selection.
                 let closed = std::mem::take(&mut self.show_shortcuts)
+                    || self.storage.take().is_some()
                     || self.sync.dialog.take().is_some()
                     || self.scope_prompt.take().is_some()
                     || self.editor.take().is_some()
@@ -731,6 +735,7 @@ impl App {
             Message::Update(m) => return crate::updater::update(self, m),
             Message::Images(m) => return crate::image_tasks::update(self, m),
             Message::Viewer(m) => return crate::viewer::update(self, m),
+            Message::Storage(m) => return crate::storage::update(self, m),
             Message::FlyoutNew => {
                 let close = crate::flyout::close(self);
                 return Task::batch([close, self.open_quick_add(None)]);
@@ -856,6 +861,7 @@ impl App {
         self.editor.is_some()
             || self.quick.is_some()
             || self.scope_prompt.is_some()
+            || self.storage.is_some()
             || self.sync.dialog.is_some()
             || self.show_shortcuts
             || crate::palette::is_open(self)
