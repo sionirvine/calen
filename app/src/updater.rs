@@ -6,8 +6,8 @@
 //! 3. Stage it and show "Update ready — restart to apply".
 //! 4. On the next launch (or "Restart now"), swap the executable / AppImage.
 
-use iced::widget::{Space, button, row, text};
-use iced::{Alignment, Element, Subscription, Task};
+use iced::widget::{Space, button, column, container, row, text};
+use iced::{Alignment, Color, Element, Length, Subscription, Task};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -54,10 +54,17 @@ pub struct UpdaterState {
 
 #[derive(Debug, Clone)]
 pub enum UpdateMsg {
-    Check { manual: bool },
-    Result { manual: bool, result: Result<UpdateStatus, String> },
+    Check {
+        manual: bool,
+    },
+    Result {
+        manual: bool,
+        result: Result<UpdateStatus, String>,
+    },
     RestartNow,
     OpenReleasePage(String),
+    /// Hide the floating "update ready" notice for this version.
+    DismissBanner,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,6 +110,13 @@ fn self_updatable() -> Option<PathBuf> {
 }
 
 pub fn boot(app: &mut App) -> Task<Message> {
+    // Dev aid: CALEN_FAKE_UPDATE=9.9.9 pretends an update is staged (debug builds only).
+    if cfg!(debug_assertions)
+        && let Ok(v) = std::env::var("CALEN_FAKE_UPDATE")
+    {
+        app.updater.status = UpdateStatus::Ready(v);
+        return Task::none();
+    }
     if !app.settings.auto_update || repo().is_none() {
         return Task::none();
     }
@@ -250,6 +264,7 @@ pub fn update(app: &mut App, m: UpdateMsg) -> Task<Message> {
             }
         },
         UpdateMsg::RestartNow => {
+            log::info!("restarting to apply the update");
             let _ = std::fs::remove_file(app.data_dir.join("instance.port"));
             if apply_staged(&app.data_dir) {
                 return iced::exit();
@@ -257,6 +272,12 @@ pub fn update(app: &mut App, m: UpdateMsg) -> Task<Message> {
             app.flash("Couldn't apply the update");
         }
         UpdateMsg::OpenReleasePage(url) => crate::app::open_url(&url),
+        UpdateMsg::DismissBanner => {
+            if let UpdateStatus::Ready(v) = &app.updater.status {
+                app.settings.dismissed_update = Some(v.clone());
+                app.save_settings();
+            }
+        }
     }
     Task::none()
 }
@@ -306,6 +327,42 @@ pub fn apply_staged(data_dir: &Path) -> bool {
             false
         }
     }
+}
+
+/// Floating "Calen X is ready · restart" notice with a close button, shown until
+/// the user restarts or dismisses it for that version.
+pub fn banner<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
+    let UpdateStatus::Ready(v) = &app.updater.status else { return None };
+    if app.settings.dismissed_update.as_ref() == Some(v) {
+        return None;
+    }
+    let fg = Color::WHITE;
+    let muted = theme::with_alpha(fg, 0.7);
+    // iced text has no underline; draw a 1 px rule under the label instead.
+    let restart = button(
+        column![
+            text("Restart").size(12.5).color(p.accent),
+            container(Space::new().width(Length::Fill).height(1))
+                .style(move |_| container::Style { background: Some(p.accent.into()), ..Default::default() }),
+        ]
+        .width(Length::Shrink),
+    )
+    .style(theme::link)
+    .padding([2, 2])
+    .on_press(Message::Update(UpdateMsg::RestartNow));
+    let close =
+        button(text("×").size(15).color(muted)).style(theme::link).padding([0, 4]).on_press(Message::Update(UpdateMsg::DismissBanner));
+    let content = row![
+        icons::icon(icons::download(), 14.0, p.success),
+        text(format!("Calen {v} is ready")).size(12.5).color(fg),
+        text("·").size(12.5).color(muted),
+        restart,
+        text("to update").size(12.5).color(muted),
+        close,
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    Some(container(content).padding([6, 12]).style(theme::pill(theme::with_alpha(Color::from_rgb8(0x22, 0x22, 0x26), 0.96), fg)).into())
 }
 
 pub fn badge<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {

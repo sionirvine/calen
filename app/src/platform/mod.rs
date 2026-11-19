@@ -186,8 +186,15 @@ pub fn popup_position(index: usize, size: iced::Size) -> iced::window::Position 
     os::popup_position(index, size)
 }
 
-pub fn force_foreground(raw: u64) {
-    os::force_foreground(raw);
+/// Make the window the focused foreground window; true once it is (or when the
+/// platform has nothing to do).
+pub fn try_focus(raw: u64) -> bool {
+    os::try_focus(raw)
+}
+
+/// Hide a window with a short fade where the platform supports it.
+pub fn fade_out(raw: u64) {
+    os::fade_out(raw);
 }
 
 /// Emit `PlatformEvent::OutsideClick` for presses outside this window (Windows).

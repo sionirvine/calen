@@ -16,24 +16,30 @@ pub const SIZE: Size = Size { width: 360.0, height: 640.0 };
 
 #[derive(Default)]
 pub struct FlyoutState {
+    /// The flyout window. Created on first use, then hidden/shown rather than
+    /// destroyed (destroying it flashed white and rebuilt it on every open).
     pub id: Option<window::Id>,
-    /// Native window handle once known (used to watch clicks outside it).
+    /// Native window handle once known (focus + watching clicks outside it).
     pub raw: Option<u64>,
+    /// Currently on screen.
+    pub shown: bool,
     pub closed_at: Option<Instant>,
     /// First day of the week picked in the mini-month; None = upcoming agenda.
     pub week: Option<NaiveDate>,
 }
+
+const FOCUS_ATTEMPTS: u32 = 12;
 
 pub fn is_flyout(app: &App, id: window::Id) -> bool {
     app.flyout.id == Some(id)
 }
 
 pub fn is_open(app: &App) -> bool {
-    app.flyout.id.is_some()
+    app.flyout.shown
 }
 
 pub fn toggle(app: &mut App, x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>) -> Task<Message> {
-    if app.flyout.id.is_some() {
+    if app.flyout.shown {
         return close(app);
     }
     // The click that unfocused (and closed) us shouldn't immediately reopen.
@@ -44,6 +50,17 @@ pub fn toggle(app: &mut App, x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>)
     app.flyout.week = None;
     app.refresh_occurrences(false);
     let pos = crate::platform::flyout_position(x, y, rect, SIZE);
+    app.flyout.shown = true;
+
+    if let Some(id) = app.flyout.id {
+        let mut tasks = vec![window::move_to(id, pos), window::set_mode(id, window::Mode::Windowed)];
+        if let Some(raw) = app.flyout.raw {
+            crate::platform::watch_outside_clicks(raw);
+            tasks.push(focus_later(id, 0));
+        }
+        return Task::batch(tasks);
+    }
+
     let (id, open) = window::open(window::Settings {
         size: SIZE,
         position: window::Position::Specific(pos),
@@ -57,39 +74,64 @@ pub fn toggle(app: &mut App, x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>)
     });
     app.flyout.id = Some(id);
     app.flyout.raw = None;
-    Task::batch([open.discard(), window::gain_focus(id), window::raw_id::<Message>(id).map(move |raw| Message::FlyoutReady(id, raw))])
+    // Ask for the native handle only once the window exists; asked earlier, the
+    // request finds no window and silently yields nothing.
+    open.then(|id| window::raw_id::<Message>(id).map(move |raw| Message::FlyoutReady(id, raw)))
 }
 
-/// The flyout window exists: pull it to the front and close it on outside clicks.
-/// Opening from a tray click often leaves it without focus, so focus loss alone
-/// isn't a reliable "clicked elsewhere" signal on Windows.
+/// The flyout window exists: watch clicks outside it and pull it to the front.
 pub fn ready(app: &mut App, id: window::Id, raw: u64) -> Task<Message> {
     if app.flyout.id != Some(id) {
         return Task::none();
     }
     app.flyout.raw = Some(raw);
-    crate::platform::force_foreground(raw);
+    if !app.flyout.shown {
+        return Task::none();
+    }
     crate::platform::watch_outside_clicks(raw);
+    focus_later(id, 0)
+}
+
+fn focus_later(id: window::Id, attempt: u32) -> Task<Message> {
+    Task::perform(tokio::time::sleep(std::time::Duration::from_millis(50)), move |_| Message::FlyoutFocus(id, attempt))
+}
+
+/// Keep asking for focus until the window is actually visible and focused. iced
+/// shows new windows only after their first frame, and Windows ignores focus
+/// requests for hidden windows, so a single early request isn't enough.
+pub fn focus(app: &mut App, id: window::Id, attempt: u32) -> Task<Message> {
+    let (Some(raw), true) = (app.flyout.raw, app.flyout.shown && app.flyout.id == Some(id)) else {
+        return Task::none();
+    };
+    if crate::platform::try_focus(raw) {
+        log::debug!("flyout focused after {} attempt(s)", attempt + 1);
+        return Task::none();
+    }
+    if attempt + 1 < FOCUS_ATTEMPTS {
+        return focus_later(id, attempt + 1);
+    }
+    log::warn!("flyout: couldn't take focus; closing relies on the click watcher");
     Task::none()
 }
 
 pub fn outside_click(app: &mut App, raw: u64) -> Task<Message> {
-    if app.flyout.raw == Some(raw) {
+    if app.flyout.shown && app.flyout.raw == Some(raw) {
+        log::info!("flyout: outside click, closing");
         return close(app);
     }
     Task::none()
 }
 
+/// Hide the flyout (fading out where supported). The window is kept for next time.
 pub fn close(app: &mut App) -> Task<Message> {
-    match app.flyout.id.take() {
-        Some(id) => {
-            crate::platform::unwatch_outside_clicks();
-            app.flyout.raw = None;
-            app.flyout.closed_at = Some(Instant::now());
-            window::close(id)
-        }
-        None => Task::none(),
+    let Some(id) = app.flyout.id.filter(|_| app.flyout.shown) else { return Task::none() };
+    app.flyout.shown = false;
+    app.flyout.closed_at = Some(Instant::now());
+    crate::platform::unwatch_outside_clicks();
+    if let Some(raw) = app.flyout.raw {
+        crate::platform::fade_out(raw);
     }
+    window::set_mode(id, window::Mode::Hidden)
 }
 
 /// A day in the flyout's mini-month was clicked: list that week.
@@ -105,13 +147,14 @@ pub fn pick_week(app: &mut App, d: NaiveDate) {
 
 pub fn close_requested(app: &mut App, id: window::Id) -> Task<Message> {
     if app.flyout.id == Some(id) {
+        // Alt+F4 hides it like any other dismissal.
         return close(app);
     }
     window::close(id)
 }
 
 pub fn unfocused(app: &mut App, id: window::Id) -> Task<Message> {
-    if app.flyout.id == Some(id) {
+    if app.flyout.id == Some(id) && app.flyout.shown {
         return close(app);
     }
     Task::none()
@@ -180,14 +223,17 @@ pub fn view(app: &App) -> Element<'_, Message> {
     if let Some(h) = list_header {
         body = body.push(h);
     }
+    let banner: Element<'_, Message> = match crate::updater::banner(app, p) {
+        Some(b) => container(b).center_x(Length::Fill).padding([0, 8]).into(),
+        None => Space::new().into(),
+    };
     container(
-        body.extend([
-            scrollable(container(list).padding(Padding { top: 0.0, right: 14.0, bottom: 8.0, left: 14.0 }))
-                .style(theme::side_scroll)
-                .height(Length::Fill)
-                .into(),
-            container(footer).padding([6, 8]).into(),
-        ]),
+        body.extend([scrollable(container(list).padding(Padding { top: 0.0, right: 14.0, bottom: 8.0, left: 14.0 }))
+            .style(theme::side_scroll)
+            .height(Length::Fill)
+            .into()])
+            .push(banner)
+            .push(container(footer).padding([6, 8])),
     )
     .width(Length::Fill)
     .height(Length::Fill)

@@ -75,6 +75,8 @@ pub struct Settings {
     pub default_calendar: Option<String>,
     pub close_to_tray: bool,
     pub minimize_to_tray: bool,
+    /// Update version whose "ready" notice the user closed.
+    pub dismissed_update: Option<String>,
     pub start_at_login: bool,
     pub notifications: bool,
     /// Unix seconds; DND active while now < this. i64::MAX = until turned off.
@@ -102,6 +104,7 @@ impl Default for Settings {
             default_calendar: None,
             close_to_tray: true,
             minimize_to_tray: true,
+            dismissed_update: None,
             start_at_login: true,
             notifications: true,
             dnd_until: None,

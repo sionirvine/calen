@@ -236,6 +236,12 @@ fn main_window(app: &App) -> Element<'_, Message> {
     if let Some(el) = crate::viewer::view(app, p) {
         layers.push(el);
     }
+    if let Some(b) = crate::updater::banner(app, p) {
+        // Above the transient toast so the two never overlap.
+        layers.push(
+            container(b).align_bottom(Length::Fill).center_x(Length::Fill).padding(Padding { bottom: 64.0, ..Default::default() }).into(),
+        );
+    }
     if let Some((msg, _)) = &app.toast {
         layers.push(
             container(
