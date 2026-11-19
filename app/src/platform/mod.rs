@@ -104,6 +104,13 @@ pub fn init_tray(dnd: bool) {
     }
 }
 
+/// Tray hover text, e.g. "Calen v0.1.2" or "Calen v0.1.2 — Do Not Disturb".
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+pub fn tray_tooltip(dnd: bool) -> String {
+    let base = concat!("Calen v", env!("CARGO_PKG_VERSION"));
+    if dnd { format!("{base} — Do Not Disturb") } else { base.to_string() }
+}
+
 pub fn tray_available() -> bool {
     TRAY_OK.get().copied().unwrap_or(false)
 }

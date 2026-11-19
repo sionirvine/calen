@@ -24,7 +24,7 @@ impl ksni::Tray for CalenTray {
     }
 
     fn tool_tip(&self) -> ksni::ToolTip {
-        ksni::ToolTip { title: if self.dnd { "Calen — Do Not Disturb".into() } else { "Calen".into() }, ..Default::default() }
+        ksni::ToolTip { title: super::tray_tooltip(self.dnd), ..Default::default() }
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {

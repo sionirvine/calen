@@ -8,10 +8,13 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 
 - **Tray app.** Starts at login (`--minimized`), and close/minimize hides it to the tray
   (each can be switched off: `> Close to tray`, `> Minimize to tray`).
-  Left-click the tray icon for a flyout with a mini-month and upcoming events; click a day
+  Left-click the tray icon for a flyout with a mini-month and upcoming events (double-click
+  opens the main window on Windows); click a day
   to list that whole week, click anywhere outside to close it. Right-click
   opens a menu (Open, New Event, Do Not Disturb, Sync Now, Quit). The tray icon shows
   today's date. Only one copy runs at a time; launching it again brings the window back.
+- **Own title bar.** No system title bar: minimize / maximize / close sit in the toolbar,
+  and dragging (or double-clicking) the toolbar moves (or maximizes) the window.
 - **Day / Week / Month views.** Drag events to move them, drag the bottom edge to change
   the length, drag on empty space to create an event, and double-click to open one.
   Multi-day and all-day bars can be dragged across days. For a repeating event you choose

@@ -71,6 +71,12 @@ pub enum Message {
     CloseRequested(window::Id),
     WindowEvent(window::Id, window::Event),
     ShowMain,
+    // custom title bar
+    WinDrag,
+    WinMinimize,
+    WinToggleMaximize,
+    WinResize(window::Direction),
+    MaximizedChanged(bool),
     SystemTheme(iced::theme::Mode),
 }
 
@@ -100,6 +106,7 @@ pub struct App {
     pub settings: Settings,
     pub main_window: Option<window::Id>,
     pub main_visible: bool,
+    pub main_maximized: bool,
     pub view: ViewKind,
     pub anchor: NaiveDate,
     pub mini_month: NaiveDate,
@@ -154,6 +161,7 @@ impl App {
             settings,
             main_window: None,
             main_visible: false,
+            main_maximized: false,
             anchor: today,
             mini_month: first_of_month(today),
             selected: None,
@@ -236,6 +244,8 @@ impl App {
         let (id, open) = window::open(window::Settings {
             size: iced::Size::new(1240.0, 800.0),
             min_size: Some(iced::Size::new(720.0, 480.0)),
+            // Calen draws its own title bar (toolbar + caption buttons).
+            decorations: false,
             exit_on_close_request: false,
             icon: crate::platform::window_icon(),
             platform_specific: crate::platform::main_window_platform(),
@@ -759,6 +769,27 @@ impl App {
             Message::FlyoutWeek(None) => self.flyout.week = None,
             Message::FlyoutReady(id, raw) => return crate::flyout::ready(self, id, raw),
             Message::Popup(m) => return crate::alert_popup::update(self, m),
+            Message::WinDrag => {
+                if let Some(id) = self.main_window {
+                    return window::drag(id);
+                }
+            }
+            Message::WinMinimize => {
+                if let Some(id) = self.main_window {
+                    return window::minimize(id, true);
+                }
+            }
+            Message::WinToggleMaximize => {
+                if let Some(id) = self.main_window {
+                    return window::toggle_maximize(id);
+                }
+            }
+            Message::WinResize(dir) => {
+                if let Some(id) = self.main_window {
+                    return window::drag_resize(id, dir);
+                }
+            }
+            Message::MaximizedChanged(m) => self.main_maximized = m,
             Message::CloseShortcuts => self.show_shortcuts = false,
             Message::SystemTheme(mode) => self.system_dark = !matches!(mode, iced::theme::Mode::Light),
         }
@@ -812,6 +843,9 @@ impl App {
                 if self.settings.minimize_to_tray && crate::platform::tray_available() && self.main_visible {
                     return self.hide_main();
                 }
+            }
+            window::Event::Resized(_) if Some(id) == self.main_window => {
+                return window::is_maximized(id).map(Message::MaximizedChanged);
             }
             _ => {}
         }
