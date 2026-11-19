@@ -1,9 +1,11 @@
 //! Dark sidebar: mini-month with event dots + agenda (also used by the tray flyout).
 
 use chrono::{Datelike, Duration, Local, NaiveDate};
-use iced::widget::{Space, button, checkbox, column, container, mouse_area, row, scrollable, text};
-use iced::{Alignment, Color, Element, Font, Length, Padding, font};
+use iced::widget::scrollable::AbsoluteOffset;
+use iced::widget::{Space, button, checkbox, column, container, mouse_area, operation, row, scrollable, sensor, text};
+use iced::{Alignment, Color, Element, Font, Length, Padding, Task, font};
 use std::collections::HashMap;
+use std::time::{Duration as StdDuration, Instant};
 
 use crate::app::{App, Message, first_of_month, start_of_week};
 use crate::icons;
@@ -56,6 +58,11 @@ pub fn mini_month<'a>(app: &'a App, p: Palette, target: MiniTarget) -> Element<'
     }
 
     let today = Local::now().date_naive();
+    // The picked day: the main view's date, or the flyout's picked day.
+    let picked = match target {
+        MiniTarget::Main => Some(app.anchor),
+        MiniTarget::Flyout => app.flyout.week.map(|_| app.flyout.active),
+    };
     let mut weekdays = row![].spacing(0);
     for i in 0..7 {
         let d = first + Duration::days(i);
@@ -99,7 +106,7 @@ pub fn mini_month<'a>(app: &'a App, p: Palette, target: MiniTarget) -> Element<'
             .spacing(1);
             r = r.push(
                 button(container(cell).center_x(Length::Fill))
-                    .style(theme::mini_day(target == MiniTarget::Main && d == app.anchor && d != today, d == today, in_month))
+                    .style(theme::mini_day(picked == Some(d), d == today, in_month))
                     .padding(Padding::from([3, 0]))
                     .width(Length::Fill)
                     .on_press(match target {
@@ -151,7 +158,8 @@ pub fn occ_time_label(o: &Occ, day: NaiveDate, h24: bool) -> String {
 
 /// Agenda list starting at `from`, covering `days` days. `whole_days` keeps
 /// events that already ended (a picked week); otherwise today hides finished ones.
-/// Events from `from` for `days` days. `empty` is shown when nothing is listed.
+/// `empty` is shown when nothing is listed. The `active` (picked) day is always
+/// listed, with a red heading on a band; today's heading stays blue.
 pub fn agenda<'a>(
     app: &'a App,
     p: Palette,
@@ -159,6 +167,7 @@ pub fn agenda<'a>(
     days: i64,
     whole_days: bool,
     empty: Option<&'static str>,
+    active: Option<NaiveDate>,
 ) -> Element<'a, Message> {
     let today = Local::now().date_naive();
     let h24 = app.settings.time_24h;
@@ -172,19 +181,30 @@ pub fn agenda<'a>(
             .filter(|o| o.start.date_naive() <= d && o.last_day() >= d)
             .filter(|o| whole_days || d != today || o.all_day || o.end > app.now || o.start.date_naive() != d)
             .collect();
-        if items.is_empty() && d != today {
+        let picked = active == Some(d);
+        if items.is_empty() && d != today && !picked {
             continue;
         }
         any = true;
         let (label, is_today) = day_label(d, today);
-        col = col.push(
-            container(text(label).size(11.5).font(BOLD).color(if is_today { p.today } else { p.sidebar_muted })).padding(Padding {
-                top: 10.0,
-                bottom: 4.0,
-                left: 0.0,
-                right: 0.0,
-            }),
-        );
+        let color = if is_today {
+            p.today
+        } else if picked {
+            p.accent
+        } else {
+            p.sidebar_muted
+        };
+        let heading = text(label).size(11.5).font(BOLD).color(color);
+        col = col.push(if picked {
+            container(container(heading).width(Length::Fill).padding([3, 6]).style(move |_| container::Style {
+                background: Some(theme::with_alpha(p.accent, 0.14).into()),
+                border: iced::Border { radius: 6.0.into(), ..Default::default() },
+                ..Default::default()
+            }))
+            .padding(Padding { top: 7.0, bottom: 1.0, left: 0.0, right: 0.0 })
+        } else {
+            container(heading).padding(Padding { top: 10.0, bottom: 4.0, left: 0.0, right: 0.0 })
+        });
         if items.is_empty() {
             col = col.push(text("Nothing scheduled").size(12).color(p.sidebar_muted));
         }
@@ -266,6 +286,140 @@ fn agenda_item<'a>(app: &'a App, p: Palette, o: &'a Occ, day: NaiveDate, h24: bo
     .into()
 }
 
+/// A week list whose measured parts let it open with the picked day at the top.
+#[derive(Default)]
+pub struct WeekPane {
+    /// Heights of the days before the picked one, the picked day onward, and
+    /// the visible list.
+    past_h: Option<f32>,
+    tail_h: Option<f32>,
+    view_h: Option<f32>,
+    /// Until then, new measurements re-apply the scroll.
+    scroll_until: Option<Instant>,
+}
+
+/// Which window a week list is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Main,
+    Flyout,
+}
+
+impl Pane {
+    fn scroll_id(self) -> &'static str {
+        match self {
+            Pane::Main => "side-list",
+            Pane::Flyout => "flyout-list",
+        }
+    }
+}
+
+/// A part of a week list whose height was measured.
+#[derive(Debug, Clone, Copy)]
+pub enum Part {
+    Past,
+    Tail,
+    Viewport,
+}
+
+/// Days of `week` before `active`, or None when `active` isn't in that week.
+fn days_before(week: NaiveDate, active: NaiveDate) -> Option<i64> {
+    let n = (active - week).num_days();
+    (0..7).contains(&n).then_some(n)
+}
+
+/// How long a picked day keeps being scrolled into place while it's measured.
+pub const SETTLE: StdDuration = StdDuration::from_millis(800);
+
+impl WeekPane {
+    /// Scroll so `active`'s heading is the first line (the top when it isn't in
+    /// `week`), and keep doing so for `settle` while the parts are measured.
+    pub fn scroll_to(&mut self, pane: Pane, week: Option<NaiveDate>, active: NaiveDate, settle: StdDuration) -> Task<Message> {
+        self.scroll_until = Some(Instant::now() + settle);
+        self.apply(pane, week, active)
+    }
+
+    fn apply(&self, pane: Pane, week: Option<NaiveDate>, active: NaiveDate) -> Task<Message> {
+        let y = match week.and_then(|w| days_before(w, active)) {
+            Some(n) if n > 0 => self.past_h.unwrap_or(0.0),
+            _ => 0.0,
+        };
+        operation::scroll_to(pane.scroll_id(), AbsoluteOffset { x: 0.0, y })
+    }
+
+    pub fn measured(&mut self, part: Part, h: f32, pane: Pane, week: Option<NaiveDate>, active: NaiveDate) -> Task<Message> {
+        let slot = match part {
+            Part::Past => &mut self.past_h,
+            Part::Tail => &mut self.tail_h,
+            Part::Viewport => &mut self.view_h,
+        };
+        *slot = Some(h);
+        if self.scroll_until.is_some_and(|t| Instant::now() < t) {
+            return self.apply(pane, week, active);
+        }
+        Task::none()
+    }
+}
+
+/// "Week of 16 – 22 November".
+pub fn week_label(start: NaiveDate) -> String {
+    let end = start + Duration::days(6);
+    if start.month() == end.month() {
+        format!("Week of {} – {}", start.format("%-d"), end.format("%-d %B"))
+    } else {
+        format!("Week of {} – {}", start.format("%-d %b"), end.format("%-d %b"))
+    }
+}
+
+/// The week from `start`: the days before `active`, then `active` onward, each
+/// measured so the list can open with `active` at the top. A spacer below lets
+/// the list scroll that far even when the rest of the week is short.
+pub fn week_list<'a>(app: &'a App, p: Palette, start: NaiveDate, active: NaiveDate, pane: Pane) -> Element<'a, Message> {
+    let state = match pane {
+        Pane::Main => &app.side_pane,
+        Pane::Flyout => &app.flyout.pane,
+    };
+    let (past, tail, room): (Element<'a, Message>, Element<'a, Message>, f32) = match days_before(start, active) {
+        Some(n) => {
+            let past = if n > 0 { agenda(app, p, start, n, true, None, Some(active)) } else { Space::new().into() };
+            let tail = agenda(app, p, start + Duration::days(n), 7 - n, true, None, Some(active));
+            let room = match (state.view_h, state.tail_h) {
+                // 8 = the list's bottom padding.
+                (Some(v), Some(t)) if n > 0 => (v - t - 8.0).max(0.0),
+                _ => 0.0,
+            };
+            (past, tail, room)
+        }
+        None => (Space::new().into(), agenda(app, p, start, 7, true, Some("Nothing this week"), None), 0.0),
+    };
+    // Same structure for every week, so the sensors keep their state.
+    column![
+        sensor(past).on_show(move |s| Message::PaneMeasured(pane, Part::Past, s.height)).on_resize(move |s| Message::PaneMeasured(
+            pane,
+            Part::Past,
+            s.height
+        )),
+        sensor(tail).on_show(move |s| Message::PaneMeasured(pane, Part::Tail, s.height)).on_resize(move |s| Message::PaneMeasured(
+            pane,
+            Part::Tail,
+            s.height
+        )),
+        Space::new().height(room),
+    ]
+    .into()
+}
+
+/// The scrollable around a week list, measured for the spacer.
+pub fn week_scroller<'a>(content: Element<'a, Message>, pane: Pane) -> Element<'a, Message> {
+    // The background matters for the CPU renderer: it repaints where shapes
+    // move, and without one, bits of text scrolled away were left behind.
+    let list = container(content).padding(Padding { top: 0.0, right: 14.0, bottom: 8.0, left: 14.0 }).style(theme::sidebar);
+    sensor(scrollable(list).id(iced::widget::Id::new(pane.scroll_id())).style(theme::side_scroll).height(Length::Fill))
+        .on_show(move |s| Message::PaneMeasured(pane, Part::Viewport, s.height))
+        .on_resize(move |s| Message::PaneMeasured(pane, Part::Viewport, s.height))
+        .into()
+}
+
 fn calendars_list<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {
     let mut col = column![text("CALENDARS").size(11.5).font(BOLD).color(p.sidebar_muted)].spacing(6);
     let accounts = app.store.accounts().unwrap_or_default();
@@ -319,11 +473,16 @@ pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
         .align_y(Alignment::Center),
     );
 
-    let body: Element<'a, Message> = if app.show_calendars {
-        calendars_list(app, p)
+    let week = start_of_week(app.anchor, app.settings.week_start_day());
+    let list: Element<'a, Message> = if app.show_calendars {
+        scrollable(container(calendars_list(app, p)).padding([0, 14])).style(theme::side_scroll).height(Length::Fill).into()
     } else {
-        let from = Local::now().date_naive().min(app.anchor).max(Local::now().date_naive());
-        agenda(app, p, from, 21, false, Some("No upcoming events"))
+        column![
+            container(text(week_label(week)).size(12).font(BOLD).color(p.sidebar_text)).padding([0, 14]),
+            week_scroller(week_list(app, p, week, app.anchor, Pane::Main), Pane::Main),
+        ]
+        .spacing(2)
+        .into()
     };
 
     let dnd = app.settings.dnd_active(chrono::Utc::now().timestamp());
@@ -364,8 +523,7 @@ pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
         column![
             container(top).padding([8, 10]),
             container(mini_month(app, p, MiniTarget::Main)).padding([0, 14]),
-            container(scrollable(container(body).padding([0, 14])).style(theme::side_scroll).height(Length::Fill))
-                .padding(Padding { top: 6.0, ..Default::default() }),
+            container(list).height(Length::Fill).padding(Padding { top: 6.0, ..Default::default() }),
             container(footer).padding([6, 8]),
         ]
         .spacing(4),

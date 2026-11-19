@@ -139,7 +139,7 @@ pub fn update(app: &mut App, msg: SyncMsg) -> Task<Message> {
                 return start(app);
             }
         }
-        SyncMsg::Frame => app.sync.spinner = (app.sync.spinner + 0.35) % (std::f32::consts::TAU),
+        SyncMsg::Frame => app.sync.spinner = (app.sync.spinner + 0.7) % (std::f32::consts::TAU),
         SyncMsg::Done(result) => {
             match result {
                 Ok(report) => {
@@ -237,7 +237,7 @@ pub fn subscription(app: &App) -> Subscription<Message> {
         subs.push(iced::time::every(Duration::from_millis(1000)).map(|_| Message::Sync(SyncMsg::Check)));
     }
     if app.sync.status == Status::Syncing && app.main_visible {
-        subs.push(iced::time::every(Duration::from_millis(40)).map(|_| Message::Sync(SyncMsg::Frame)));
+        subs.push(iced::time::every(Duration::from_millis(80)).map(|_| Message::Sync(SyncMsg::Frame)));
     }
     Subscription::batch(subs)
 }

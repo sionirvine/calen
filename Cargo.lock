@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "calen"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "auto-launch",
  "calen-core",
@@ -752,7 +752,7 @@ dependencies = [
 
 [[package]]
 name = "calen-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "chrono",
  "chrono-tz",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "calen-images"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "chrono",
  "hmac 0.12.1",
@@ -782,7 +782,7 @@ dependencies = [
 
 [[package]]
 name = "calen-store"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "rusqlite",
  "serde",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "calen-sync"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "calen-core",
  "calen-store",

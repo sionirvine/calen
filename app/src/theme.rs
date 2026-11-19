@@ -304,8 +304,6 @@ pub fn mini_day(selected: bool, today: bool, in_month: bool) -> impl Fn(&Theme, 
         let p = palette(theme);
         let bg = if today {
             Some(p.today.into())
-        } else if selected {
-            Some(p.sidebar_hover.into())
         } else if matches!(status, button::Status::Hovered) {
             Some(with_alpha(p.sidebar_hover, 0.7).into())
         } else {
@@ -318,7 +316,9 @@ pub fn mini_day(selected: bool, today: bool, in_month: bool) -> impl Fn(&Theme, 
         } else {
             p.sidebar_muted
         };
-        button::Style { background: bg, text_color, border: Border { radius: 999.0.into(), ..Default::default() }, ..Default::default() }
+        // The picked day gets a red ring; today keeps its blue fill.
+        let border = Border { radius: 999.0.into(), width: if selected { 1.5 } else { 0.0 }, color: p.accent };
+        button::Style { background: bg, text_color, border, ..Default::default() }
     }
 }
 

@@ -16,6 +16,7 @@ use crate::settings::{Settings, ThemeChoice, ViewKind};
 use crate::theme::{self, Palette};
 use crate::views::editor::{self, CalChoice, Editor};
 use crate::views::grid::GridMsg;
+use crate::views::sidebar::Pane;
 use crate::views::week::HOUR_H;
 
 pub const WEEK_SCROLL: &str = "week-scroll";
@@ -61,7 +62,8 @@ pub enum Message {
     FlyoutNew,
     /// List the week of that day in the flyout (None = the upcoming list).
     FlyoutWeek(Option<NaiveDate>),
-    FlyoutMeasured(crate::flyout::Part, f32),
+    /// A measured part of a week list (left pane or flyout).
+    PaneMeasured(crate::views::sidebar::Pane, crate::views::sidebar::Part, f32),
     FlyoutReady(window::Id, u64),
     FlyoutFocus(window::Id, u32),
     Popup(crate::alert_popup::PopupMsg),
@@ -143,6 +145,10 @@ pub struct App {
     pub updater: crate::updater::UpdaterState,
     pub viewer: Option<crate::viewer::Viewer>,
     pub storage: Option<crate::storage::StorageDialog>,
+    /// Drawn grid layers, kept across repaints that don't change them.
+    pub grid_caches: crate::views::grid::GridCaches,
+    /// The left pane's week list.
+    pub side_pane: crate::views::sidebar::WeekPane,
 }
 
 pub struct Flags {
@@ -198,6 +204,8 @@ impl App {
             updater: Default::default(),
             viewer: None,
             storage: None,
+            grid_caches: Default::default(),
+            side_pane: Default::default(),
         };
         app.refresh_occurrences(true);
         let task = if flags.start_minimized { Task::none() } else { app.open_main() };
@@ -229,9 +237,14 @@ impl App {
         } else {
             Task::none()
         };
-        // `--demo palette|editor` opens that screen after start (README screenshots).
+        // `--demo palette|editor|pick:+N|flyout-pick:+N` sets that up after start
+        // (README screenshots and checks).
         let demo = match std::env::args().skip_while(|a| a != "--demo").nth(1) {
-            Some(what) if dev => Task::perform(tokio::time::sleep(std::time::Duration::from_secs(2)), move |_| Message::Demo(what.clone())),
+            Some(what) if dev => {
+                // After the flyout start aid (4 s) when both are given.
+                let secs = if std::env::args().any(|a| a == "--flyout") { 5 } else { 2 };
+                Task::perform(tokio::time::sleep(std::time::Duration::from_secs(secs)), move |_| Message::Demo(what.clone()))
+            }
             _ => Task::none(),
         };
         (app, Task::batch([task, sync, upd, flyout, demo]))
@@ -260,7 +273,12 @@ impl App {
     pub fn open_main(&mut self) -> Task<Message> {
         if let Some(id) = self.main_window {
             self.main_visible = true;
-            return Task::batch([window::set_mode(id, window::Mode::Windowed), window::minimize(id, false), window::gain_focus(id)]);
+            return Task::batch([
+                window::set_mode(id, window::Mode::Windowed),
+                window::minimize(id, false),
+                window::gain_focus(id),
+                self.scroll_side(crate::views::sidebar::SETTLE),
+            ]);
         }
         let (size, pos) = self.main_geometry;
         let (id, open) = window::open(window::Settings {
@@ -289,6 +307,7 @@ impl App {
         self.reopen_maximized = self.main_maximized;
         self.main_maximized = false;
         self.drop_hover = false;
+        self.grid_caches = Default::default();
         if self.editor.is_none() && self.viewer.is_none() {
             self.images.trim();
         }
@@ -614,6 +633,12 @@ impl App {
         self.refresh_occurrences(false);
     }
 
+    /// Scroll the left pane so the picked day is its first line.
+    fn scroll_side(&mut self, settle: std::time::Duration) -> Task<Message> {
+        let week = start_of_week(self.anchor, self.settings.week_start_day());
+        self.side_pane.scroll_to(Pane::Main, Some(week), self.anchor, settle)
+    }
+
     fn scroll_to_morning(&self) -> Task<Message> {
         let hour = if self.visible_days().contains(&self.now.date_naive()) {
             (self.now.hour_f32() - 2.0).clamp(0.0, 16.0).min(self.settings.day_start_hour as f32).max(0.0)
@@ -637,10 +662,11 @@ impl App {
                 };
                 self.mini_month = first_of_month(self.anchor);
                 self.refresh_occurrences(false);
+                return self.scroll_side(crate::views::sidebar::SETTLE);
             }
             Message::Today => {
                 self.jump_to(Local::now().date_naive());
-                return self.scroll_to_morning();
+                return Task::batch([self.scroll_to_morning(), self.scroll_side(crate::views::sidebar::SETTLE)]);
             }
             Message::SetView(v) => {
                 self.view = v;
@@ -650,6 +676,7 @@ impl App {
             }
             Message::SelectDate(d) => {
                 self.jump_to(d);
+                return self.scroll_side(crate::views::sidebar::SETTLE);
             }
             Message::MiniShift(n) => {
                 self.mini_month = add_months(self.mini_month, n);
@@ -767,7 +794,10 @@ impl App {
                     return Task::perform(tokio::time::sleep(std::time::Duration::from_millis(120)), |_| Message::ScrollMorning);
                 }
             }
-            Message::ScrollMorning => return self.scroll_to_morning(),
+            // The window was just created: its list is measured over the next frames.
+            Message::ScrollMorning => {
+                return Task::batch([self.scroll_to_morning(), self.scroll_side(std::time::Duration::from_secs(2))]);
+            }
             Message::CloseRequested(id) => {
                 if Some(id) == self.main_window {
                     if self.settings.close_to_tray && crate::platform::tray_available() {
@@ -797,7 +827,11 @@ impl App {
                 return Task::batch([close, self.open_quick_add(None)]);
             }
             Message::FlyoutWeek(w) => return crate::flyout::show_week(self, w),
-            Message::FlyoutMeasured(part, h) => return crate::flyout::measured(self, part, h),
+            Message::PaneMeasured(Pane::Flyout, part, h) => return crate::flyout::measured(self, part, h),
+            Message::PaneMeasured(Pane::Main, part, h) => {
+                let week = start_of_week(self.anchor, self.settings.week_start_day());
+                return self.side_pane.measured(part, h, Pane::Main, Some(week), self.anchor);
+            }
             Message::FlyoutReady(id, raw) => return crate::flyout::ready(self, id, raw),
             Message::FlyoutFocus(id, attempt) => return crate::flyout::focus(self, id, attempt),
             Message::Popup(m) => return crate::alert_popup::update(self, m),
@@ -829,7 +863,22 @@ impl App {
                         return self.open_editor_for(&key);
                     }
                 }
-                _ => {}
+                // `pick:+N` / `flyout-pick:+N`: pick the day N days from today, as a
+                // click on that date would (main view, or the flyout's mini-month).
+                w => {
+                    let offset = |prefix: &str| w.strip_prefix(prefix).and_then(|n| n.parse::<i64>().ok());
+                    let today = Local::now().date_naive();
+                    if let Some(n) = offset("flyout-pick:") {
+                        return crate::flyout::show_week(self, Some(today + Duration::days(n)));
+                    }
+                    if let Some(n) = offset("month-pick:") {
+                        let view = self.update(Message::SetView(ViewKind::Month));
+                        return Task::batch([view, self.on_grid(GridMsg::SelectDate(today + Duration::days(n)))]);
+                    }
+                    if let Some(n) = offset("pick:") {
+                        return self.on_grid(GridMsg::SelectDate(today + Duration::days(n)));
+                    }
+                }
             },
             Message::TrimMemory => {
                 // Only when nothing is on screen; otherwise pages come right back.
@@ -911,9 +960,8 @@ impl App {
             GridMsg::Select(k) => self.selected = k,
             GridMsg::Open(k) => return self.open_editor_for(&k),
             GridMsg::SelectDate(d) => {
-                self.anchor = d;
-                self.mini_month = first_of_month(d);
-                self.refresh_occurrences(false);
+                self.jump_to(d);
+                return self.scroll_side(crate::views::sidebar::SETTLE);
             }
             GridMsg::NewOn(d) => return self.open_quick_add(Some(d)),
             GridMsg::Create { start, end, all_day } => {
@@ -1056,7 +1104,20 @@ impl App {
         Subscription::batch([
             keys,
             window::close_requests().map(Message::CloseRequested),
-            window::events().map(|(id, e)| Message::WindowEvent(id, e)),
+            // Only the window events we act on. Not `window::events()`: that also
+            // forwards RedrawRequested, so every frame became a message that
+            // rebuilt every view and drew a second frame.
+            iced::event::listen_with(|e, _, id| match e {
+                iced::Event::Window(
+                    w @ (window::Event::FileHovered(_)
+                    | window::Event::FilesHoveredLeft
+                    | window::Event::FileDropped(_)
+                    | window::Event::Unfocused
+                    | window::Event::Resized(_)
+                    | window::Event::Moved(_)),
+                ) => Some(Message::WindowEvent(id, w)),
+                _ => None,
+            }),
             iced::time::every(std::time::Duration::from_secs(20)).map(|_| Message::Tick),
             iced::system::theme_changes().map(Message::SystemTheme),
             crate::platform::subscription(),
