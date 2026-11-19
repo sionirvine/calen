@@ -6,8 +6,10 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 
 ## Features
 
-- **Tray app.** Starts at login (`--minimized`), and close/minimize hides it to the tray.
-  Left-click the tray icon for a flyout with a mini-month and upcoming events. Right-click
+- **Tray app.** Starts at login (`--minimized`), and close/minimize hides it to the tray
+  (each can be switched off: `> Close to tray`, `> Minimize to tray`).
+  Left-click the tray icon for a flyout with a mini-month and upcoming events; click a day
+  to list that whole week, click anywhere outside to close it. Right-click
   opens a menu (Open, New Event, Do Not Disturb, Sync Now, Quit). The tray icon shows
   today's date. Only one copy runs at a time; launching it again brings the window back.
 - **Day / Week / Month views.** Drag events to move them, drag the bottom edge to change
@@ -19,11 +21,15 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   the date, time, place, calendar and alert. Enter adds it; Tab opens the full editor.
 - **Command palette.** `Ctrl+P`, `Ctrl+F` or `/` does a fuzzy search over all events.
   Start with `>` for commands and settings (theme, Do Not Disturb, start at login,
-  default alert, accounts, image API key, updates, and more).
+  default alert, accounts, image storage, updates, and more).
 - **Notifications** with Join / Snooze actions. They are held back while Calen's
   Do Not Disturb is on, during Windows full-screen games, presentation mode or quiet
   hours, and when GNOME/KDE Do Not Disturb or Feral GameMode is active. Windows Focus
   Assist suppresses the toasts itself. Missed alerts are summarized when you return.
+  If the system won't show notifications at all (Windows notifications switched off, no
+  notification server), Calen shows its own reminder popup in the screen corner instead.
+  `> Notifications: send a test alert` checks the whole path. Logs go to `calen.log` in
+  the data folder.
 - **CalDAV sync** that works offline first: every edit is saved locally and queued, then
   pushed with ETags and pulled incrementally using `sync-collection`. If the same event
   was changed elsewhere, your version is kept as a copy. The toolbar pill shows syncing,

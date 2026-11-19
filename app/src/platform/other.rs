@@ -22,3 +22,14 @@ pub fn system_quiet_reason() -> Option<&'static str> {
 pub fn notify(_n: &Notice) -> Result<(), String> {
     Err("notifications not implemented on this platform".into())
 }
+
+pub fn force_foreground(_raw: u64) {}
+pub fn watch_outside_clicks(_raw: u64) {}
+pub fn unwatch_outside_clicks() {}
+pub fn toasts_blocked() -> Option<&'static str> {
+    None
+}
+pub const NOTIFICATION_SETTINGS: Option<&str> = None;
+pub fn popup_position(_index: usize, _size: iced::Size) -> iced::window::Position {
+    iced::window::Position::Centered
+}

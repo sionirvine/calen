@@ -59,6 +59,10 @@ pub enum Message {
     Images(crate::image_tasks::ImageMsg),
     Viewer(crate::viewer::ViewerMsg),
     FlyoutNew,
+    /// Flyout mini-month click: list that day's week (None = back to upcoming).
+    FlyoutWeek(Option<NaiveDate>),
+    FlyoutReady(window::Id, u64),
+    Popup(crate::alert_popup::PopupMsg),
     Storage(crate::storage::StorageMsg),
     ScrollMorning,
     CloseShortcuts,
@@ -118,6 +122,7 @@ pub struct App {
     pub palette_state: Option<crate::palette::PaletteState>,
     pub show_shortcuts: bool,
     pub flyout: crate::flyout::FlyoutState,
+    pub popups: crate::alert_popup::PopupState,
     pub notify: crate::notify::NotifyState,
     pub updater: crate::updater::UpdaterState,
     pub viewer: Option<crate::viewer::Viewer>,
@@ -169,6 +174,7 @@ impl App {
             palette_state: None,
             show_shortcuts: false,
             flyout: Default::default(),
+            popups: Default::default(),
             notify: Default::default(),
             updater: Default::default(),
             viewer: None,
@@ -193,7 +199,13 @@ impl App {
             let _ = crate::platform::set_autostart(true);
         }
         let upd = crate::updater::boot(&mut app);
-        (app, Task::batch([task, sync, upd]))
+        // Dev aid: `--flyout` opens the tray flyout as if the tray icon was clicked.
+        let flyout = if cfg!(debug_assertions) && std::env::args().any(|a| a == "--flyout") {
+            Task::done(Message::Platform(crate::platform::PlatformEvent::TrayClick { x: 100_000.0, y: 100_000.0, rect: None }))
+        } else {
+            Task::none()
+        };
+        (app, Task::batch([task, sync, upd, flyout]))
     }
 
     pub fn palette(&self) -> Palette {
@@ -722,6 +734,9 @@ impl App {
                     }
                     return iced::exit();
                 }
+                if let Some(t) = crate::alert_popup::close_requested(self, id) {
+                    return t;
+                }
                 return crate::flyout::close_requested(self, id);
             }
             Message::WindowEvent(id, ev) => return self.on_window_event(id, ev),
@@ -740,6 +755,10 @@ impl App {
                 let close = crate::flyout::close(self);
                 return Task::batch([close, self.open_quick_add(None)]);
             }
+            Message::FlyoutWeek(Some(d)) => crate::flyout::pick_week(self, d),
+            Message::FlyoutWeek(None) => self.flyout.week = None,
+            Message::FlyoutReady(id, raw) => return crate::flyout::ready(self, id, raw),
+            Message::Popup(m) => return crate::alert_popup::update(self, m),
             Message::CloseShortcuts => self.show_shortcuts = false,
             Message::SystemTheme(mode) => self.system_dark = !matches!(mode, iced::theme::Mode::Light),
         }
@@ -759,6 +778,8 @@ impl App {
             PlatformEvent::Menu(MenuAction::ToggleDnd) => return crate::palette::run(self, crate::palette::Command::ToggleDnd),
             PlatformEvent::Menu(MenuAction::SyncNow) => return self.update(Message::Sync(crate::sync_hook::SyncMsg::Start)),
             PlatformEvent::Menu(MenuAction::Quit) => return iced::exit(),
+            PlatformEvent::OutsideClick(raw) => return crate::flyout::outside_click(self, raw),
+            PlatformEvent::NotifyFailed(n) => return crate::notify::failed(self, n),
             PlatformEvent::Notification(NotificationAction::Join(url)) => open_url(&url),
             PlatformEvent::Notification(NotificationAction::Snooze(key)) => crate::notify::snooze(self, &key),
             PlatformEvent::Notification(NotificationAction::Open(key)) => {
@@ -788,7 +809,7 @@ impl App {
             window::Event::Unfocused => return crate::flyout::unfocused(self, id),
             window::Event::Resized(size) if Some(id) == self.main_window && size.width < 1.0 && size.height < 1.0 => {
                 // Minimized (Windows reports a 0x0 resize) -> tuck into the tray.
-                if self.settings.close_to_tray && crate::platform::tray_available() && self.main_visible {
+                if self.settings.minimize_to_tray && crate::platform::tray_available() && self.main_visible {
                     return self.hide_main();
                 }
             }
@@ -870,6 +891,10 @@ impl App {
 
     fn on_key(&mut self, key: Key, mods: keyboard::Modifiers) -> Task<Message> {
         let ctrl = mods.command();
+        // The flyout closes on any outside click, so while it's open it has the keyboard.
+        if crate::flyout::is_open(self) && key == Key::Named(Named::Escape) {
+            return crate::flyout::close(self);
+        }
         if let Some(t) = crate::viewer::on_key(self, &key) {
             return t;
         }

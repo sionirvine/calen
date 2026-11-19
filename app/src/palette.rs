@@ -27,7 +27,10 @@ pub enum Command {
     Theme(ThemeChoice),
     StartAtLogin(bool),
     CloseToTray(bool),
+    MinimizeToTray(bool),
     Notifications(bool),
+    TestNotification,
+    NotificationSettings,
     RespectSystemDnd(bool),
     Clock24(bool),
     WeekStart(u8),
@@ -120,6 +123,12 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
             format!("Currently {}", on_off(s.close_to_tray)),
         ),
         (
+            Command::MinimizeToTray(!s.minimize_to_tray),
+            format!("Minimize to tray: turn {}", on_off(!s.minimize_to_tray).to_lowercase()),
+            format!("Currently {}", on_off(s.minimize_to_tray)),
+        ),
+        (Command::TestNotification, "Notifications: send a test alert".into(), String::new()),
+        (
             Command::Notifications(!s.notifications),
             format!("Event alerts: turn {}", on_off(!s.notifications).to_lowercase()),
             format!("Currently {}", on_off(s.notifications)),
@@ -146,6 +155,10 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
         (Command::Shortcuts, "Keyboard shortcuts".into(), String::new()),
         (Command::Quit, "Quit Calen".into(), String::new()),
     ];
+    if crate::platform::notification_settings_url().is_some() {
+        let state = crate::platform::toasts_blocked().unwrap_or("Notifications are allowed");
+        v.push((Command::NotificationSettings, "Notifications: open system notification settings".into(), state.into()));
+    }
     if s.image_host != crate::settings::ImageHost::Off {
         v.push((Command::ImageUploadsOff, "Image storage: turn uploads off".into(), String::new()));
     }
@@ -329,7 +342,15 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
             }
         }
         Command::CloseToTray(b) => s.close_to_tray = b,
+        Command::MinimizeToTray(b) => s.minimize_to_tray = b,
         Command::Notifications(b) => s.notifications = b,
+        Command::TestNotification => return crate::notify::test(app),
+        Command::NotificationSettings => {
+            if let Some(url) = crate::platform::notification_settings_url() {
+                crate::app::open_url(url);
+            }
+            return Task::none();
+        }
         Command::RespectSystemDnd(b) => s.respect_system_dnd = b,
         Command::Clock24(b) => s.time_24h = b,
         Command::WeekStart(d) => s.week_start = d,

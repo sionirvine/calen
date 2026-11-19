@@ -196,3 +196,28 @@ pub fn notify(n: &Notice) -> Result<(), String> {
     });
     Ok(())
 }
+
+// Focus loss closes the flyout on GNOME/KDE; there is no global click hook on Wayland.
+pub fn force_foreground(_raw: u64) {}
+pub fn watch_outside_clicks(_raw: u64) {}
+pub fn unwatch_outside_clicks() {}
+
+/// notify-rust reports a missing notification server as an error, which
+/// triggers the in-app reminder popup instead.
+pub fn toasts_blocked() -> Option<&'static str> {
+    None
+}
+
+pub const NOTIFICATION_SETTINGS: Option<&str> = None;
+
+/// Top-right corner (where GNOME/KDE show notifications), stacked downwards.
+pub fn popup_position(index: usize, _size: iced::Size) -> iced::window::Position {
+    fn at(i: usize, win: iced::Size, monitor: iced::Size) -> iced::Point {
+        iced::Point::new((monitor.width - win.width - 16.0).max(0.0), 48.0 + i as f32 * (win.height + 8.0))
+    }
+    iced::window::Position::SpecificWith(match index {
+        0 => |w, m| at(0, w, m),
+        1 => |w, m| at(1, w, m),
+        _ => |w, m| at(2, w, m),
+    })
+}
