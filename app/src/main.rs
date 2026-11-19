@@ -60,6 +60,21 @@ fn open_log_file(dir: &std::path::Path) {
     }
 }
 
+/// Pick iced's renderer from the saved setting (an explicit ICED_BACKEND wins).
+/// Must run before any other thread starts, since it sets an environment variable.
+fn choose_renderer(data_dir: &std::path::Path) {
+    if std::env::var_os("ICED_BACKEND").is_some() {
+        return;
+    }
+    let renderer = calen_store::Store::open(&data_dir.join("calen.db"))
+        .ok()
+        .and_then(|s| s.setting::<settings::Settings>(settings::Settings::KEY).ok().flatten())
+        .map(|s| s.renderer)
+        .unwrap_or_default();
+    // SAFETY: called at the top of main, before any threads are spawned.
+    unsafe { std::env::set_var("ICED_BACKEND", renderer.iced_backend()) };
+}
+
 fn main() -> iced::Result {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,wgpu=warn,naga=warn,iced_wgpu=warn,iced_winit=warn,cosmic_text=warn"),
@@ -78,6 +93,7 @@ fn main() -> iced::Result {
         .or_else(|| directories::ProjectDirs::from("com", "felixadr", "Calen").map(|d| d.data_dir().to_path_buf()))
         .unwrap_or_else(|| std::env::temp_dir().join("calen"));
     let _ = std::fs::create_dir_all(&data_dir);
+    choose_renderer(&data_dir);
 
     if !platform::instance::acquire(&data_dir) {
         log::info!("Calen is already running; asked it to show itself");

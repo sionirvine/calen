@@ -11,6 +11,25 @@ pub enum ThemeChoice {
     Light,
 }
 
+/// How windows are drawn. CPU (tiny-skia) uses a fraction of the memory of the
+/// GPU path (whose driver allocations dominate Calen's footprint).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum Renderer {
+    #[default]
+    Cpu,
+    Gpu,
+}
+
+impl Renderer {
+    /// Value for iced's `ICED_BACKEND` (with a fallback if the first choice fails).
+    pub fn iced_backend(self) -> &'static str {
+        match self {
+            Renderer::Cpu => "tiny-skia,wgpu",
+            Renderer::Gpu => "wgpu,tiny-skia",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ViewKind {
     Day,
@@ -77,6 +96,8 @@ pub struct Settings {
     pub minimize_to_tray: bool,
     /// Update version whose "ready" notice the user closed.
     pub dismissed_update: Option<String>,
+    /// Applied at the next start.
+    pub renderer: Renderer,
     pub start_at_login: bool,
     pub notifications: bool,
     /// Unix seconds; DND active while now < this. i64::MAX = until turned off.
@@ -105,6 +126,7 @@ impl Default for Settings {
             close_to_tray: true,
             minimize_to_tray: true,
             dismissed_update: None,
+            renderer: Renderer::Cpu,
             start_at_login: true,
             notifications: true,
             dnd_until: None,

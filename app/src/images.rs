@@ -12,6 +12,12 @@ pub struct ImageCache {
 }
 
 impl ImageCache {
+    /// Forget decoded thumbnails (they're reloaded from the disk cache on demand).
+    pub fn trim(&mut self) {
+        self.handles = HashMap::new();
+        self.failed.clear();
+    }
+
     pub fn thumb(&self, url: &str) -> Option<&Handle> {
         self.handles.get(url)
     }
