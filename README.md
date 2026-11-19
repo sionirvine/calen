@@ -17,8 +17,11 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   (each can be switched off: `> Close to tray`, `> Minimize to tray`). On GNOME the tray
   icon needs the AppIndicator extension (`gnome-shell-extension-appindicator`); without it,
   close/minimize keep Calen running, a *Calen is running* notification (Open / Quit) stays
-  in the notification list, and launching Calen again brings the window back. On Linux,
-  Calen adds itself to the app menu (`~/.local/share/applications`) so it gets its icon.
+  in the notification list, and launching Calen again brings the window back. The Flatpak
+  shows up under Quick Settings → *Background Apps* instead of that notification, with a
+  status line such as *Reminders are on*. On Linux,
+  the AppImage adds itself to the app menu (`~/.local/share/applications`) so it gets
+  its icon.
   Left-click the tray icon for a flyout with a mini-month and this week's events, opened
   with today at the top (scroll up for earlier days; double-click the icon to open the main
   window on Windows). Click a day to list its week with that day at the top, *Upcoming* or
@@ -69,7 +72,18 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   pan, ←/→ to move between images.
 - **Auto-update** from GitHub Releases. Calen downloads and verifies the update in the
   background, then shows a small floating notice (*Calen X is ready · Restart to update*,
-  dismissible) and applies it on the next start.
+  dismissible) and applies it on the next start. The Flatpak is updated by Flatpak
+  instead.
+
+## Install on Linux
+
+- **Flatpak** (recommended; runs on any distro): download `Calen-x86_64.flatpak` from the
+  latest release and run `flatpak install --user Calen-x86_64.flatpak`. Flathub is coming.
+  The Flatpak keeps its data in `~/.var/app/com.felixadr.Calen`, so if you used the
+  AppImage before, it starts with an empty cache and syncs again (saved passwords stay in
+  the keyring). Start at login asks the desktop's Background portal for permission.
+- **AppImage**: `Calen-x86_64.AppImage` runs on glibc 2.35+ (Ubuntu 22.04, Debian 12) and
+  updates itself.
 
 ## Memory
 
@@ -116,6 +130,20 @@ sudo apt install build-essential pkg-config libdbus-1-dev libxkbcommon-dev libwa
 On GNOME, the tray needs the AppIndicator extension (`gnome-shell-extension-appindicator`
 on Debian). KDE supports it natively.
 
+**Flatpak build.** Install `org.flatpak.Builder` from Flathub, then:
+
+```bash
+flatpak run org.flatpak.Builder --user --install --force-clean build-dir packaging/flatpak/com.felixadr.Calen.yml
+flatpak run com.felixadr.Calen
+```
+
+The build is offline, so after changing `Cargo.lock`, regenerate
+`packaging/flatpak/cargo-sources.json` with
+[flatpak-cargo-generator](https://github.com/flatpak/flatpak-builder-tools/tree/master/cargo)
+(`flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json`). CI
+fails if it's out of date. `packaging/flatpak/flathub/` holds the copy submitted to
+Flathub, which builds from a release tag.
+
 **Image uploads** (optional): `Ctrl+P` → `> Image storage: set up uploads…`.
 
 | Host | You need |
@@ -142,9 +170,9 @@ CALEN_TEST_S3="http://127.0.0.1:9000,bucket,key,secret" cargo test -p calen-imag
 ## Releases and updates
 
 Push a tag `vX.Y.Z`. `.github/workflows/release.yml` builds
-`calen-windows-x86_64.exe` and `Calen-x86_64.AppImage` (on Ubuntu 22.04, so it runs on
-Debian stable), adds `.sha256` files, optionally signs them with minisign, and publishes
-the GitHub release. Builds made by CI include the repository name, so the app knows
+`calen-windows-x86_64.exe`, `Calen-x86_64.AppImage` (on Ubuntu 22.04, so it runs on
+Debian stable) and `Calen-x86_64.flatpak`, adds `.sha256` files, optionally signs them
+with minisign, and publishes the GitHub release. Builds made by CI include the repository name, so the app knows
 where to look for updates. To enable signature checking, see the comments at the top of
 the workflow.
 

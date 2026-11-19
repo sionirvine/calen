@@ -3,8 +3,9 @@ resolver = "3"
 members = ["crates/calen-core", "crates/calen-store", "crates/calen-sync", "crates/calen-images", "app"]
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
+license = "MIT"
 
 [workspace.dependencies]
 calen-core = { path = "crates/calen-core" }

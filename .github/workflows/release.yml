@@ -1,7 +1,8 @@
 name: Release
 
-# Push a tag like v0.2.0 to build Windows + Linux binaries and publish a GitHub release.
-# The app checks this repository's latest release and self-updates on next restart.
+# Push a tag like v0.2.0 to build Windows + Linux binaries (AppImage, Flatpak bundle) and publish a GitHub release.
+# The app checks this repository's latest release and self-updates on next restart
+# (except the Flatpak, which Flatpak updates).
 #
 # Optional signing (recommended):
 #   minisign -G -p calen.pub -s calen.key      (once, locally)
@@ -71,8 +72,27 @@ jobs:
           name: linux
           path: dist/*
 
+  flatpak:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-26.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Calen-x86_64.flatpak
+          manifest-path: packaging/flatpak/com.felixadr.Calen.yml
+          cache-key: flatpak-builder-${{ hashFiles('Cargo.lock') }}
+          upload-artifact: false
+      - run: mkdir dist && mv Calen-x86_64.flatpak dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*
+
   publish:
-    needs: [windows, linux]
+    needs: [windows, linux, flatpak]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
@@ -92,7 +112,7 @@ jobs:
           sudo apt-get install -y minisign
           echo "$MINISIGN_KEY" > /tmp/calen.key
           cd dist
-          for f in calen-windows-x86_64.exe Calen-x86_64.AppImage; do
+          for f in calen-windows-x86_64.exe Calen-x86_64.AppImage Calen-x86_64.flatpak; do
             echo "$MINISIGN_PASSWORD" | minisign -S -s /tmp/calen.key -m "$f"
           done
           rm /tmp/calen.key

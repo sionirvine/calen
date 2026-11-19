@@ -2,6 +2,7 @@
 name = "calen"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 description = "A fast native calendar that lives in your tray"
 
 [[bin]]

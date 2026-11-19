@@ -28,6 +28,13 @@ pub mod instance;
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub const APP_ID: &str = "com.felixadr.Calen";
 
+/// Running inside a Flatpak sandbox. The package then provides the desktop
+/// entry, icons and updates, and autostart goes through the Background portal.
+pub fn sandboxed() -> bool {
+    static SANDBOXED: OnceLock<bool> = OnceLock::new();
+    *SANDBOXED.get_or_init(|| cfg!(target_os = "linux") && std::path::Path::new("/.flatpak-info").exists())
+}
+
 /// Events coming from OS threads/callbacks into the iced app.
 #[derive(Debug, Clone)]
 pub enum PlatformEvent {
@@ -102,6 +109,7 @@ pub fn init_tray(dnd: bool) {
     if !ok {
         log::warn!("system tray not available");
     }
+    update_background_status(dnd, false);
 }
 
 /// Tray hover text, e.g. "Calen v0.1.2" or "Calen v0.1.2 — Do Not Disturb".
@@ -126,7 +134,7 @@ pub fn can_run_in_background() -> bool {
 /// "Calen is running" notification so it's clear Calen didn't quit.
 pub fn entered_background() {
     #[cfg(target_os = "linux")]
-    if !tray_available() {
+    if !tray_available() && !shows_background_apps() {
         os::show_running_notice();
     }
 }
@@ -141,6 +149,36 @@ pub fn left_background() {
 pub fn update_tray(dnd: bool, problem: bool) {
     if tray_available() {
         os::update_tray(dnd, problem);
+    }
+    update_background_status(dnd, problem);
+}
+
+/// GNOME (44+) lists a sandboxed app that runs without a window under
+/// Quick Settings → Background Apps, with a button to stop it. There the
+/// "Calen is running" notification would only repeat that.
+#[cfg(target_os = "linux")]
+fn shows_background_apps() -> bool {
+    sandboxed()
+        && std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")))
+}
+
+/// The line shown under Calen in GNOME's Background Apps (Flatpak only).
+fn update_background_status(dnd: bool, problem: bool) {
+    #[cfg(target_os = "linux")]
+    if sandboxed() {
+        os::set_background_status(background_status(dnd, problem));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (dnd, problem);
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn background_status(dnd: bool, problem: bool) -> &'static str {
+    match (dnd, problem) {
+        (false, false) => "Reminders are on",
+        (false, true) => "Reminders are on · Sync problem",
+        (true, false) => "Do Not Disturb: reminders are held",
+        (true, true) => "Do Not Disturb · Sync problem",
     }
 }
 
@@ -242,11 +280,20 @@ fn autolaunch() -> Option<auto_launch::AutoLaunch> {
 }
 
 pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if sandboxed() {
+        return os::request_background(enabled);
+    }
     let al = autolaunch().ok_or("can't determine the app path")?;
     let r = if enabled { al.enable() } else { al.disable() };
     r.map_err(|e| e.to_string())
 }
 
 pub fn autostart_enabled() -> bool {
+    // The Background portal can't be asked for the current state; the setting
+    // is the source of truth, and the portal is told whenever it changes.
+    if sandboxed() {
+        return true;
+    }
     autolaunch().and_then(|a| a.is_enabled().ok()).unwrap_or(false)
 }

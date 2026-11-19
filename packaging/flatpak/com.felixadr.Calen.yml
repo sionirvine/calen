@@ -1,0 +1,52 @@
+# Flatpak manifest for local and CI builds (builds the checked-out tree).
+# The Flathub copy is packaging/flatpak/flathub/com.felixadr.Calen.yml.
+#
+#   flatpak run org.flatpak.Builder --user --install --force-clean \
+#     build-dir packaging/flatpak/com.felixadr.Calen.yml
+#
+# After changing Cargo.lock, regenerate cargo-sources.json (see README).
+id: com.felixadr.Calen
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: calen
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Reminder notifications with actions (Open / Join / Snooze)
+  - --talk-name=org.freedesktop.Notifications
+  # Tray icon (KDE, GNOME with the AppIndicator extension)
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # CalDAV passwords in the desktop keyring
+  - --talk-name=org.freedesktop.secrets
+  # Hold reminders while a game is running
+  - --talk-name=com.feralinteractive.GameMode
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/calen/cargo
+    CARGO_NET_OFFLINE: 'true'
+modules:
+  - name: calen
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path Cargo.toml --verbose
+      - cargo --offline build --release --locked -p calen
+      - install -Dm755 target/release/calen -t /app/bin
+      - install -Dm644 packaging/linux/com.felixadr.Calen.desktop -t /app/share/applications
+      - install -Dm644 packaging/linux/com.felixadr.Calen.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 assets/calen.png /app/share/icons/hicolor/256x256/apps/com.felixadr.Calen.png
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - target
+          - .flatpak-builder
+          - build-dir
+          - repo
+      - cargo-sources.json

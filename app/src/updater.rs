@@ -20,6 +20,10 @@ const REPO_ENV: Option<&str> = option_env!("CALEN_GITHUB_REPO");
 const PUBKEY_ENV: Option<&str> = option_env!("CALEN_UPDATE_PUBKEY");
 
 fn repo() -> Option<&'static str> {
+    // Flatpak installs are updated by Flatpak, never by Calen itself.
+    if crate::platform::sandboxed() {
+        return None;
+    }
     REPO_ENV.filter(|r| !r.trim().is_empty())
 }
 

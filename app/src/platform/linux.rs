@@ -89,6 +89,9 @@ impl ksni::Tray for CalenTray {
 static HANDLE: OnceLock<Mutex<ksni::blocking::Handle<CalenTray>>> = OnceLock::new();
 
 pub fn early_init() {
+    if super::sandboxed() {
+        return; // the Flatpak exports its own desktop entry and icons
+    }
     if let Err(e) = install_desktop_entry() {
         log::warn!("couldn't install the desktop entry: {e}");
     }
@@ -153,7 +156,9 @@ fn desktop_quote(s: &str) -> String {
 
 pub fn init_tray(dnd: bool) -> bool {
     let tray = CalenTray { dnd, problem: false, day: chrono::Datelike::day(&chrono::Local::now()) };
-    match tray.spawn() {
+    // A sandbox can't own the spec's `StatusNotifierItem-PID-ID` name; hosts
+    // accept a tray registered under its unique bus name instead.
+    match tray.disable_dbus_name(super::sandboxed()).spawn() {
         Ok(h) => {
             let _ = HANDLE.set(Mutex::new(h));
             true
@@ -288,8 +293,20 @@ pub fn system_quiet_reason() -> Option<&'static str> {
     {
         return Some("Do Not Disturb is on");
     }
-    // GNOME: org.gnome.desktop.notifications show-banners
-    if let Ok(out) = std::process::Command::new("gsettings").args(["get", "org.gnome.desktop.notifications", "show-banners"]).output()
+    // GNOME: org.gnome.desktop.notifications show-banners (through the Settings
+    // portal in a sandbox, which has no gsettings)
+    if super::sandboxed() {
+        if let Ok(p) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+        ) && let Ok(v) = p.call::<_, _, zbus::zvariant::OwnedValue>("ReadOne", &("org.gnome.desktop.notifications", "show-banners"))
+            && let Ok(false) = bool::try_from(v)
+        {
+            return Some("Do Not Disturb is on");
+        }
+    } else if let Ok(out) = std::process::Command::new("gsettings").args(["get", "org.gnome.desktop.notifications", "show-banners"]).output()
         && out.status.success()
         && String::from_utf8_lossy(&out.stdout).trim() == "false"
     {
@@ -307,6 +324,78 @@ pub fn system_quiet_reason() -> Option<&'static str> {
         return Some("a game is running (GameMode)");
     }
     None
+}
+
+/// Set the status line the Background portal shows for Calen (GNOME's
+/// Background Apps). Only sent when it changes; needs portal version 2.
+pub fn set_background_status(message: &'static str) {
+    static LAST: Mutex<Option<&'static str>> = Mutex::new(None);
+    {
+        let mut last = LAST.lock().unwrap();
+        if *last == Some(message) {
+            return;
+        }
+        *last = Some(message);
+    }
+    std::thread::spawn(move || {
+        let result = (|| -> zbus::Result<()> {
+            let conn = dbus().ok_or_else(|| zbus::Error::Failure("no session bus".into()))?;
+            let portal = zbus::blocking::Proxy::new(
+                &conn,
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Background",
+            )?;
+            let mut options: std::collections::HashMap<&str, zbus::zvariant::Value> = std::collections::HashMap::new();
+            options.insert("message", message.into());
+            portal.call_method("SetStatus", &(options,))?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            log::info!("background status: {e}");
+        }
+    });
+}
+
+/// Ask the XDG Background portal to start Calen at login (or not). The answer
+/// arrives later, possibly after a permission dialog, so it is only logged.
+pub fn request_background(autostart: bool) -> Result<(), String> {
+    use std::collections::HashMap;
+    use zbus::zvariant::Value;
+
+    let conn = dbus().ok_or("no session bus")?;
+    std::thread::spawn(move || {
+        let result = (|| -> zbus::Result<u32> {
+            let token = format!("calen{}", std::process::id());
+            let sender = conn.unique_name().map(|n| n.trim_start_matches(':').replace('.', "_")).unwrap_or_default();
+            let path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
+            // Subscribe before the call so the response can't be missed.
+            let request = zbus::blocking::Proxy::new(&conn, "org.freedesktop.portal.Desktop", path, "org.freedesktop.portal.Request")?;
+            let mut responses = request.receive_signal("Response")?;
+            let portal = zbus::blocking::Proxy::new(
+                &conn,
+                "org.freedesktop.portal.Desktop",
+                "/org/freedesktop/portal/desktop",
+                "org.freedesktop.portal.Background",
+            )?;
+            let mut options: HashMap<&str, Value> = HashMap::new();
+            options.insert("handle_token", token.as_str().into());
+            options.insert("reason", "Start Calen at login so reminders keep working".into());
+            options.insert("autostart", autostart.into());
+            options.insert("commandline", vec!["calen", "--minimized"].into());
+            options.insert("dbus-activatable", false.into());
+            portal.call_method("RequestBackground", &("", options))?;
+            let msg = responses.next().ok_or_else(|| zbus::Error::Failure("no portal response".into()))?;
+            let (code, _results): (u32, HashMap<String, zbus::zvariant::OwnedValue>) = msg.body().deserialize()?;
+            Ok(code)
+        })();
+        match result {
+            Ok(0) => log::info!("background portal: autostart {}", if autostart { "on" } else { "off" }),
+            Ok(code) => log::warn!("background portal declined the request (response {code})"),
+            Err(e) => log::warn!("background portal: {e}"),
+        }
+    });
+    Ok(())
 }
 
 pub fn notify(n: &Notice) -> Result<(), String> {
