@@ -221,6 +221,11 @@ pub struct Rgba {
     pub pixels: Vec<u8>,
 }
 
+/// Where [`thumbnail`] caches the thumbnail of `url` inside `cache_dir`.
+pub fn thumbnail_path(url: &str, cache_dir: &Path) -> std::path::PathBuf {
+    cache_dir.join(cache_name(url, "-t"))
+}
+
 fn cache_name(url: &str, suffix: &str) -> String {
     // FNV-1a — stable, no extra deps.
     let mut h: u64 = 0xcbf29ce484222325;
@@ -255,7 +260,7 @@ fn to_rgba(img: image::DynamicImage) -> Rgba {
 
 /// Thumbnail (≤256 px, cropped square-ish by the UI), cached on disk.
 pub async fn thumbnail(url: &str, cache_dir: &Path) -> Result<Rgba, ImageError> {
-    let path = cache_dir.join(cache_name(url, "-t"));
+    let path = thumbnail_path(url, cache_dir);
     if let Ok(bytes) = tokio::fs::read(&path).await
         && let Ok(img) = decode(&bytes)
     {

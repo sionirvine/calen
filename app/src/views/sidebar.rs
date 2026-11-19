@@ -151,7 +151,15 @@ pub fn occ_time_label(o: &Occ, day: NaiveDate, h24: bool) -> String {
 
 /// Agenda list starting at `from`, covering `days` days. `whole_days` keeps
 /// events that already ended (a picked week); otherwise today hides finished ones.
-pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64, whole_days: bool) -> Element<'a, Message> {
+/// Events from `from` for `days` days. `empty` is shown when nothing is listed.
+pub fn agenda<'a>(
+    app: &'a App,
+    p: Palette,
+    from: NaiveDate,
+    days: i64,
+    whole_days: bool,
+    empty: Option<&'static str>,
+) -> Element<'a, Message> {
     let today = Local::now().date_naive();
     let h24 = app.settings.time_24h;
     let mut col = column![].spacing(2);
@@ -184,8 +192,8 @@ pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64, whole_da
             col = col.push(agenda_item(app, p, o, d, h24));
         }
     }
-    if !any {
-        col = col.push(text(if whole_days { "Nothing this week" } else { "No upcoming events" }).size(12).color(p.sidebar_muted));
+    if let (false, Some(msg)) = (any, empty) {
+        col = col.push(text(msg).size(12).color(p.sidebar_muted));
     }
     col.into()
 }
@@ -315,7 +323,7 @@ pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
         calendars_list(app, p)
     } else {
         let from = Local::now().date_naive().min(app.anchor).max(Local::now().date_naive());
-        agenda(app, p, from, 21, false)
+        agenda(app, p, from, 21, false, Some("No upcoming events"))
     };
 
     let dnd = app.settings.dnd_active(chrono::Utc::now().timestamp());

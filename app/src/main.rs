@@ -63,16 +63,17 @@ fn open_log_file(dir: &std::path::Path) {
 /// Pick iced's renderer from the saved setting (an explicit ICED_BACKEND wins).
 /// Must run before any other thread starts, since it sets an environment variable.
 fn choose_renderer(data_dir: &std::path::Path) {
-    if std::env::var_os("ICED_BACKEND").is_some() {
-        return;
+    if std::env::var_os("ICED_BACKEND").is_none() {
+        let renderer = calen_store::Store::open(&data_dir.join("calen.db"))
+            .ok()
+            .and_then(|s| s.setting::<settings::Settings>(settings::Settings::KEY).ok().flatten())
+            .map(|s| s.renderer)
+            .unwrap_or_default();
+        // SAFETY: called at the top of main, before any threads are spawned.
+        unsafe { std::env::set_var("ICED_BACKEND", renderer.iced_backend()) };
     }
-    let renderer = calen_store::Store::open(&data_dir.join("calen.db"))
-        .ok()
-        .and_then(|s| s.setting::<settings::Settings>(settings::Settings::KEY).ok().flatten())
-        .map(|s| s.renderer)
-        .unwrap_or_default();
-    // SAFETY: called at the top of main, before any threads are spawned.
-    unsafe { std::env::set_var("ICED_BACKEND", renderer.iced_backend()) };
+    let backend = std::env::var("ICED_BACKEND").unwrap_or_default();
+    theme::set_cpu_rendering(backend.trim().starts_with("tiny-skia"));
 }
 
 fn main() -> iced::Result {

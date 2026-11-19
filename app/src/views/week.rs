@@ -346,6 +346,12 @@ impl<'a> Program<GridMsg> for WeekGrid<'a> {
         let col_w = self.col_w(&bounds);
         let today = self.now.date_naive();
 
+        // Gutter background. Besides the colour, it makes the CPU renderer repaint
+        // the hour labels when the grid scrolls: it repaints where shapes are, and
+        // compares text without the scroll offset, so labels on an empty gutter
+        // kept their old positions.
+        grid::rect(&mut frame, Rectangle::new(Point::ORIGIN, Size::new(GUTTER, bounds.height)), p.bg);
+
         // Column backgrounds
         for (d, day) in self.days.iter().enumerate() {
             let x = GUTTER + d as f32 * col_w;
