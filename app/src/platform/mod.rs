@@ -192,6 +192,11 @@ pub fn try_focus(raw: u64) -> bool {
     os::try_focus(raw)
 }
 
+/// Return idle memory pages to the OS (Windows: empty the working set).
+pub fn trim_memory() {
+    os::trim_memory();
+}
+
 /// Hide a window with a short fade where the platform supports it.
 pub fn fade_out(raw: u64) {
     os::fade_out(raw);

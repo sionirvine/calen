@@ -30,6 +30,7 @@ pub enum Command {
     MinimizeToTray(bool),
     Notifications(bool),
     TestNotification,
+    Renderer(crate::settings::Renderer),
     NotificationSettings,
     RespectSystemDnd(bool),
     Clock24(bool),
@@ -128,6 +129,16 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
             format!("Currently {}", on_off(s.minimize_to_tray)),
         ),
         (Command::TestNotification, "Notifications: send a test alert".into(), String::new()),
+        (
+            Command::Renderer(crate::settings::Renderer::Cpu),
+            "Rendering: CPU (uses less memory)".into(),
+            renderer_hint(s.renderer == crate::settings::Renderer::Cpu),
+        ),
+        (
+            Command::Renderer(crate::settings::Renderer::Gpu),
+            "Rendering: GPU (smoother, uses more memory)".into(),
+            renderer_hint(s.renderer == crate::settings::Renderer::Gpu),
+        ),
         (
             Command::Notifications(!s.notifications),
             format!("Event alerts: turn {}", on_off(!s.notifications).to_lowercase()),
@@ -345,6 +356,12 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
         Command::MinimizeToTray(b) => s.minimize_to_tray = b,
         Command::Notifications(b) => s.notifications = b,
         Command::TestNotification => return crate::notify::test(app),
+        Command::Renderer(r) => {
+            if s.renderer != r {
+                s.renderer = r;
+                app.flash("Applies the next time Calen starts");
+            }
+        }
         Command::NotificationSettings => {
             if let Some(url) = crate::platform::notification_settings_url() {
                 crate::app::open_url(url);
@@ -493,4 +510,8 @@ pub fn view<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
         .style(theme::popover)
         .into(),
     )
+}
+
+fn renderer_hint(active: bool) -> String {
+    if active { "Current · applies at next start".into() } else { "Applies at next start".into() }
 }

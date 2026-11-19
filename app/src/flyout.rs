@@ -114,6 +114,24 @@ pub fn focus(app: &mut App, id: window::Id, attempt: u32) -> Task<Message> {
     Task::none()
 }
 
+/// Seconds a hidden flyout is kept for instant reopening before it's destroyed.
+const KEEP_HIDDEN_SECS: u64 = 60;
+
+/// Called on the app tick: destroy a flyout that has been hidden for a while,
+/// so an idle Calen in the tray doesn't hold its surface. It's recreated on the
+/// next click (hidden until its first frame, so there's no flash).
+pub fn idle(app: &mut App) -> Task<Message> {
+    let stale = app.flyout.closed_at.is_some_and(|t| t.elapsed().as_secs() >= KEEP_HIDDEN_SECS);
+    match app.flyout.id {
+        Some(id) if !app.flyout.shown && stale => {
+            app.flyout.id = None;
+            app.flyout.raw = None;
+            Task::batch([window::close(id), crate::app::trim_memory_later()])
+        }
+        _ => Task::none(),
+    }
+}
+
 pub fn outside_click(app: &mut App, raw: u64) -> Task<Message> {
     if app.flyout.shown && app.flyout.raw == Some(raw) {
         log::info!("flyout: outside click, closing");

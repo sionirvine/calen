@@ -276,6 +276,14 @@ pub fn try_focus(raw: u64) -> bool {
     }
 }
 
+pub fn trim_memory() {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+    unsafe {
+        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
+    }
+    log::debug!("trimmed working set");
+}
+
 /// Fade a window out (DWM blend, ~120 ms) instead of letting it vanish abruptly.
 pub fn fade_out(raw: u64) {
     let hwnd = raw as usize as *mut core::ffi::c_void;

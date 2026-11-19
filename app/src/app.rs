@@ -78,6 +78,7 @@ pub enum Message {
     WinToggleMaximize,
     WinResize(window::Direction),
     MaximizedChanged(bool),
+    TrimMemory,
     SystemTheme(iced::theme::Mode),
 }
 
@@ -108,6 +109,10 @@ pub struct App {
     pub main_window: Option<window::Id>,
     pub main_visible: bool,
     pub main_maximized: bool,
+    /// Last normal size/position of the main window, reused when it's recreated
+    /// (it's destroyed while Calen sits in the tray to free memory).
+    main_geometry: (Option<iced::Size>, Option<iced::Point>),
+    reopen_maximized: bool,
     pub view: ViewKind,
     pub anchor: NaiveDate,
     pub mini_month: NaiveDate,
@@ -163,6 +168,8 @@ impl App {
             main_window: None,
             main_visible: false,
             main_maximized: false,
+            main_geometry: (None, None),
+            reopen_maximized: false,
             anchor: today,
             mini_month: first_of_month(today),
             selected: None,
@@ -245,8 +252,11 @@ impl App {
             self.main_visible = true;
             return Task::batch([window::set_mode(id, window::Mode::Windowed), window::minimize(id, false), window::gain_focus(id)]);
         }
+        let (size, pos) = self.main_geometry;
         let (id, open) = window::open(window::Settings {
-            size: iced::Size::new(1240.0, 800.0),
+            size: size.unwrap_or(iced::Size::new(1240.0, 800.0)),
+            position: pos.map(window::Position::Specific).unwrap_or_default(),
+            maximized: self.reopen_maximized,
             min_size: Some(iced::Size::new(720.0, 480.0)),
             // Calen draws its own title bar (toolbar + caption buttons).
             decorations: false,
@@ -260,12 +270,19 @@ impl App {
         open.map(Message::WindowOpened)
     }
 
+    /// Send the main window to the tray. The window is destroyed rather than
+    /// hidden: its GPU surface and caches are the bulk of Calen's memory, and all
+    /// state lives in `App`, so `open_main` rebuilds it as it was.
     fn hide_main(&mut self) -> Task<Message> {
         self.main_visible = false;
-        match self.main_window {
-            Some(id) => window::set_mode(id, window::Mode::Hidden),
-            None => Task::none(),
+        let Some(id) = self.main_window.take() else { return Task::none() };
+        self.reopen_maximized = self.main_maximized;
+        self.main_maximized = false;
+        self.drop_hover = false;
+        if self.editor.is_none() && self.viewer.is_none() {
+            self.images.trim();
         }
+        Task::batch([window::close(id), trim_memory_later()])
     }
 
     // ------------------------------------------------------------------
@@ -703,7 +720,7 @@ impl App {
                     self.toast = None;
                 }
                 // Day rolled over → keep views fresh.
-                return crate::notify::tick(self);
+                return Task::batch([crate::notify::tick(self), crate::flyout::idle(self)]);
             }
             Message::DeleteSelected => {
                 if let Some(occ) = self.selected.as_ref().and_then(|k| self.occ(k)).cloned() {
@@ -795,6 +812,12 @@ impl App {
                 }
             }
             Message::MaximizedChanged(m) => self.main_maximized = m,
+            Message::TrimMemory => {
+                // Only when nothing is on screen; otherwise pages come right back.
+                if !self.main_visible && !crate::flyout::is_open(self) {
+                    crate::platform::trim_memory();
+                }
+            }
             Message::CloseShortcuts => self.show_shortcuts = false,
             Message::SystemTheme(mode) => self.system_dark = !matches!(mode, iced::theme::Mode::Light),
         }
@@ -849,7 +872,14 @@ impl App {
                     return self.hide_main();
                 }
             }
-            window::Event::Resized(_) if Some(id) == self.main_window => {
+            // Minimized windows report (-32000, -32000) on Windows; skip those.
+            window::Event::Moved(p) if Some(id) == self.main_window && !self.main_maximized && p.x > -10_000.0 => {
+                self.main_geometry.1 = Some(p);
+            }
+            window::Event::Resized(size) if Some(id) == self.main_window => {
+                if !self.main_maximized {
+                    self.main_geometry.0 = Some(size);
+                }
                 return window::is_maximized(id).map(Message::MaximizedChanged);
             }
             _ => {}
@@ -1034,6 +1064,12 @@ pub fn scroll_to_time(t: DateTime<Local>) -> Task<Message> {
     use chrono::Timelike;
     let h = (t.hour() as f32 - 2.0).max(0.0);
     operation::scroll_to(WEEK_SCROLL, AbsoluteOffset { x: 0.0, y: h * HOUR_H })
+}
+
+/// Ask the OS to drop Calen's idle pages shortly after windows went away
+/// (giving the window teardown a moment to finish first).
+pub fn trim_memory_later() -> Task<Message> {
+    Task::perform(tokio::time::sleep(std::time::Duration::from_millis(1500)), |_| Message::TrimMemory)
 }
 
 pub fn open_url(u: &str) {

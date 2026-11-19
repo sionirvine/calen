@@ -56,6 +56,14 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   background, then shows a small floating notice (*Calen X is ready · Restart to update*,
   dismissible) and applies it on the next start.
 
+## Memory
+
+Calen draws with the CPU renderer by default, which keeps it small: about 13 MB
+private memory with the window open, and about 8 MB (2–3 MB working set) idle in the
+tray, where its windows are destroyed instead of hidden. The GPU renderer
+(`> Rendering: GPU`) can be smoother on very large windows but costs about 250 MB
+while open (GPU driver allocations). `scripts/mem.ps1` measures both.
+
 ## Keyboard
 
 | Keys | Action |

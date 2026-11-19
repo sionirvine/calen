@@ -202,6 +202,7 @@ pub fn try_focus(_raw: u64) -> bool {
     true
 }
 pub fn fade_out(_raw: u64) {}
+pub fn trim_memory() {}
 pub fn watch_outside_clicks(_raw: u64) {}
 pub fn unwatch_outside_clicks() {}
 
