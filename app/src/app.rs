@@ -82,8 +82,10 @@ pub enum Message {
     WinResize(window::Direction),
     MaximizedChanged(bool),
     TrimMemory,
-    /// Dev aid (`--demo palette|editor`): open that screen.
+    /// Dev aid (`--demo palette|editor|bench|shot:…`): open that screen.
     Demo(String),
+    /// A frame went by while `--demo bench` runs.
+    BenchFrame(std::time::Instant),
     SystemTheme(iced::theme::Mode),
 }
 
@@ -139,6 +141,8 @@ pub struct App {
     pub sync: crate::sync_hook::SyncState,
     pub palette_state: Option<crate::palette::PaletteState>,
     pub show_shortcuts: bool,
+    /// `--demo bench` in progress.
+    pub bench: Option<crate::bench::Bench>,
     pub flyout: crate::flyout::FlyoutState,
     pub popups: crate::alert_popup::PopupState,
     pub notify: crate::notify::NotifyState,
@@ -198,6 +202,7 @@ impl App {
             sync: Default::default(),
             palette_state: None,
             show_shortcuts: false,
+            bench: None,
             flyout: Default::default(),
             popups: Default::default(),
             notify: Default::default(),
@@ -865,6 +870,8 @@ impl App {
             Message::MaximizedChanged(m) => self.main_maximized = m,
             Message::Demo(what) => match what.as_str() {
                 "palette" => return crate::palette::open(self, ">"),
+                "bench" => return crate::bench::start_bench(self),
+                w if w.starts_with("shot:") => return crate::bench::shot(self, &w["shot:".len()..]),
                 "editor" => {
                     if let Some(key) = self.occs.iter().find(|o| o.title.contains("photos")).map(|o| o.key.clone()) {
                         return self.open_editor_for(&key);
@@ -887,6 +894,7 @@ impl App {
                     }
                 }
             },
+            Message::BenchFrame(at) => return crate::bench::frame(self, at),
             Message::TrimMemory => {
                 // Only when nothing is on screen; otherwise pages come right back.
                 if !self.main_visible && !crate::flyout::is_open(self) {
@@ -1131,6 +1139,7 @@ impl App {
             crate::sync_hook::subscription(self),
             crate::updater::subscription(self),
             crate::viewer::subscription(self),
+            if self.bench.is_some() { window::frames().map(Message::BenchFrame) } else { Subscription::none() },
         ])
     }
 }
