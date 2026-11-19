@@ -22,6 +22,8 @@ pub fn view(app: &App, id: window::Id) -> Element<'_, Message> {
         main_window(app)
     } else if crate::flyout::is_flyout(app, id) {
         crate::flyout::view(app)
+    } else if crate::alert_popup::is_popup(app, id) {
+        crate::alert_popup::view(app, id)
     } else {
         Space::new().into()
     }

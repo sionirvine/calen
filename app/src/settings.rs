@@ -74,6 +74,7 @@ pub struct Settings {
     pub default_alert: Option<i64>,
     pub default_calendar: Option<String>,
     pub close_to_tray: bool,
+    pub minimize_to_tray: bool,
     pub start_at_login: bool,
     pub notifications: bool,
     /// Unix seconds; DND active while now < this. i64::MAX = until turned off.
@@ -100,6 +101,7 @@ impl Default for Settings {
             default_alert: Some(10),
             default_calendar: None,
             close_to_tray: true,
+            minimize_to_tray: true,
             start_at_login: true,
             notifications: true,
             dnd_until: None,

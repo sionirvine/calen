@@ -1,5 +1,6 @@
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod alert_popup;
 mod app;
 mod edit;
 mod flyout;
@@ -21,9 +22,50 @@ mod views;
 
 use app::{App, Flags};
 
+/// Log sink: stderr plus `calen.log` in the data folder once it's opened
+/// (release builds on Windows have no console, so the file is the only record).
+struct LogTee;
+
+static LOG_FILE: std::sync::OnceLock<std::sync::Mutex<(std::fs::File, u64)>> = std::sync::OnceLock::new();
+const LOG_LIMIT: u64 = 2 * 1024 * 1024;
+
+impl std::io::Write for LogTee {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let _ = std::io::stderr().write_all(buf);
+        if let Some(f) = LOG_FILE.get()
+            && let Ok(mut g) = f.lock()
+            && g.1 < LOG_LIMIT
+        {
+            g.1 += buf.len() as u64;
+            let _ = g.0.write_all(buf);
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if let Some(f) = LOG_FILE.get()
+            && let Ok(mut g) = f.lock()
+        {
+            let _ = g.0.flush();
+        }
+        Ok(())
+    }
+}
+
+/// Start a fresh `calen.log` (only the running instance does this).
+fn open_log_file(dir: &std::path::Path) {
+    if let Ok(f) = std::fs::File::create(dir.join("calen.log")) {
+        let _ = LOG_FILE.set(std::sync::Mutex::new((f, 0)));
+        log::info!("Calen {} starting", env!("CARGO_PKG_VERSION"));
+    }
+}
+
 fn main() -> iced::Result {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu=warn,naga=warn,iced_wgpu=warn,cosmic_text=warn"))
-        .init();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,wgpu=warn,naga=warn,iced_wgpu=warn,iced_winit=warn,cosmic_text=warn"),
+    )
+    .target(env_logger::Target::Pipe(Box::new(LogTee)))
+    .init();
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--export-icons") {
         let dir = args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(|| "assets".into());
@@ -41,6 +83,7 @@ fn main() -> iced::Result {
         log::info!("Calen is already running; asked it to show itself");
         return Ok(());
     }
+    open_log_file(&data_dir);
     platform::early_init();
     if updater::apply_staged(&data_dir) {
         return Ok(());

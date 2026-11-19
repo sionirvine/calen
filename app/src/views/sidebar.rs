@@ -14,7 +14,17 @@ use crate::views::grid::fmt_time;
 const BOLD: Font = Font { weight: font::Weight::Bold, ..Font::DEFAULT };
 const SEMI: Font = Font { weight: font::Weight::Semibold, ..Font::DEFAULT };
 
-pub fn mini_month<'a>(app: &'a App, p: Palette, compact: bool) -> Element<'a, Message> {
+/// Which window the mini-month is drawn in; decides what a day click does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiniTarget {
+    /// Main sidebar: a click moves the main view to that day.
+    Main,
+    /// Tray flyout: a click lists that day's week below.
+    Flyout,
+}
+
+pub fn mini_month<'a>(app: &'a App, p: Palette, target: MiniTarget) -> Element<'a, Message> {
+    let compact = target == MiniTarget::Flyout;
     let month = app.mini_month;
     let header = row![
         text(month.format("%B").to_string()).size(if compact { 24 } else { 26 }).font(BOLD).color(p.sidebar_text),
@@ -64,8 +74,12 @@ pub fn mini_month<'a>(app: &'a App, p: Palette, compact: bool) -> Element<'a, Me
     for w in 0..6 {
         let mut r = row![].spacing(0);
         let week_start = first + Duration::days(w * 7);
-        let selected_week =
-            app.view == crate::settings::ViewKind::Week && start_of_week(app.anchor, app.settings.week_start_day()) == week_start;
+        let selected_week = match target {
+            MiniTarget::Main => {
+                app.view == crate::settings::ViewKind::Week && start_of_week(app.anchor, app.settings.week_start_day()) == week_start
+            }
+            MiniTarget::Flyout => app.flyout.week == Some(week_start),
+        };
         for i in 0..7 {
             let d = week_start + Duration::days(i);
             let in_month = d.month() == month.month();
@@ -85,10 +99,13 @@ pub fn mini_month<'a>(app: &'a App, p: Palette, compact: bool) -> Element<'a, Me
             .spacing(1);
             r = r.push(
                 button(container(cell).center_x(Length::Fill))
-                    .style(theme::mini_day(d == app.anchor && d != today, d == today, in_month))
+                    .style(theme::mini_day(target == MiniTarget::Main && d == app.anchor && d != today, d == today, in_month))
                     .padding(Padding::from([3, 0]))
                     .width(Length::Fill)
-                    .on_press(Message::SelectDate(d)),
+                    .on_press(match target {
+                        MiniTarget::Main => Message::SelectDate(d),
+                        MiniTarget::Flyout => Message::FlyoutWeek(Some(d)),
+                    }),
             );
         }
         let row_el: Element<'a, Message> = if selected_week {
@@ -132,8 +149,9 @@ pub fn occ_time_label(o: &Occ, day: NaiveDate, h24: bool) -> String {
     }
 }
 
-/// Agenda list starting at `from`, covering `days` days.
-pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64) -> Element<'a, Message> {
+/// Agenda list starting at `from`, covering `days` days. `whole_days` keeps
+/// events that already ended (a picked week); otherwise today hides finished ones.
+pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64, whole_days: bool) -> Element<'a, Message> {
     let today = Local::now().date_naive();
     let h24 = app.settings.time_24h;
     let mut col = column![].spacing(2);
@@ -144,7 +162,7 @@ pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64) -> Eleme
             .occs
             .iter()
             .filter(|o| o.start.date_naive() <= d && o.last_day() >= d)
-            .filter(|o| d != today || o.all_day || o.end > app.now || o.start.date_naive() != d)
+            .filter(|o| whole_days || d != today || o.all_day || o.end > app.now || o.start.date_naive() != d)
             .collect();
         if items.is_empty() && d != today {
             continue;
@@ -167,7 +185,7 @@ pub fn agenda<'a>(app: &'a App, p: Palette, from: NaiveDate, days: i64) -> Eleme
         }
     }
     if !any {
-        col = col.push(text("No upcoming events").size(12).color(p.sidebar_muted));
+        col = col.push(text(if whole_days { "Nothing this week" } else { "No upcoming events" }).size(12).color(p.sidebar_muted));
     }
     col.into()
 }
@@ -289,7 +307,7 @@ pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
         calendars_list(app, p)
     } else {
         let from = Local::now().date_naive().min(app.anchor).max(Local::now().date_naive());
-        agenda(app, p, from, 21)
+        agenda(app, p, from, 21, false)
     };
 
     let dnd = app.settings.dnd_active(chrono::Utc::now().timestamp());
@@ -329,7 +347,7 @@ pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
     container(
         column![
             container(top).padding([8, 10]),
-            container(mini_month(app, p, false)).padding([0, 14]),
+            container(mini_month(app, p, MiniTarget::Main)).padding([0, 14]),
             container(scrollable(container(body).padding([0, 14])).style(theme::side_scroll).height(Length::Fill))
                 .padding(Padding { top: 6.0, ..Default::default() }),
             container(footer).padding([6, 8]),

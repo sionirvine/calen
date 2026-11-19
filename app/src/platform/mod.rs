@@ -42,6 +42,11 @@ pub enum PlatformEvent {
     SecondInstance,
     /// A notification button/body was activated.
     Notification(NotificationAction),
+    /// The OS refused to show a notification; show it in-app instead.
+    NotifyFailed(Notice),
+    /// A mouse press outside the watched window (raw window id).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    OutsideClick(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,8 +160,36 @@ pub fn notify(n: Notice) {
     std::thread::spawn(move || {
         if let Err(e) = os::notify(&n) {
             log::error!("notification failed: {e}");
+            emit(PlatformEvent::NotifyFailed(n));
         }
     });
+}
+
+/// Why the OS won't show our notifications right now, if it won't.
+pub fn toasts_blocked() -> Option<&'static str> {
+    os::toasts_blocked()
+}
+
+/// Where the OS lets the user turn notifications on (a URL for `open`), if known.
+pub fn notification_settings_url() -> Option<&'static str> {
+    os::NOTIFICATION_SETTINGS
+}
+
+pub fn popup_position(index: usize, size: iced::Size) -> iced::window::Position {
+    os::popup_position(index, size)
+}
+
+pub fn force_foreground(raw: u64) {
+    os::force_foreground(raw);
+}
+
+/// Emit `PlatformEvent::OutsideClick` for presses outside this window (Windows).
+pub fn watch_outside_clicks(raw: u64) {
+    os::watch_outside_clicks(raw);
+}
+
+pub fn unwatch_outside_clicks() {
+    os::unwatch_outside_clicks();
 }
 
 // ---------------------------------------------------------------------------

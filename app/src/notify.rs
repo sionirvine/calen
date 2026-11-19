@@ -78,6 +78,8 @@ pub fn tick(app: &mut App) -> Task<Message> {
         None
     };
 
+    let mut tasks = vec![crate::alert_popup::tick(app)];
+
     // Snoozed alerts.
     let due: Vec<Notice> = {
         let (due, keep): (Vec<_>, Vec<_>) = std::mem::take(&mut app.notify.snoozed).into_iter().partition(|(t, _)| Instant::now() >= *t);
@@ -85,7 +87,7 @@ pub fn tick(app: &mut App) -> Task<Message> {
         due.into_iter().map(|(_, n)| n).collect()
     };
     for n in due {
-        fire(app, n, quiet);
+        tasks.push(fire(app, n, quiet));
     }
 
     let now = Local::now();
@@ -117,7 +119,7 @@ pub fn tick(app: &mut App) -> Task<Message> {
     for (key, mut n) in to_fire {
         if app.store.claim_alarm(&key).unwrap_or(false) {
             n.key = key;
-            fire(app, n, quiet);
+            tasks.push(fire(app, n, quiet));
         }
     }
 
@@ -125,18 +127,45 @@ pub fn tick(app: &mut App) -> Task<Message> {
         let _ = app.store.prune_alarms(60 * 60 * 24 * 30);
         app.notify.last_prune = Some(Instant::now());
     }
-    Task::none()
+    Task::batch(tasks)
 }
 
-fn fire(app: &mut App, n: Notice, quiet: Option<&str>) {
+fn fire(app: &mut App, n: Notice, quiet: Option<&str>) -> Task<Message> {
     app.notify.remember(n.clone());
-    match quiet {
-        Some(reason) => {
-            log::info!("holding alert for {:?}: {reason}", n.title);
-            app.notify.missed.push(n.title.clone());
-        }
-        None => platform::notify(n),
+    if let Some(reason) = quiet {
+        log::info!("holding alert for {:?}: {reason}", n.title);
+        app.notify.missed.push(n.title.clone());
+        return Task::none();
     }
+    deliver(app, n)
+}
+
+/// Hand an alert to the OS, or show it in-app when the OS won't display it.
+fn deliver(app: &mut App, n: Notice) -> Task<Message> {
+    match platform::toasts_blocked() {
+        Some(reason) => {
+            log::info!("{reason}; showing {:?} in-app", n.title);
+            crate::alert_popup::show(app, n, Some(reason.to_string()))
+        }
+        None => {
+            log::info!("notifying {:?}", n.title);
+            platform::notify(n);
+            Task::none()
+        }
+    }
+}
+
+/// The OS failed to show `n` (reported back from the notification thread).
+pub fn failed(app: &mut App, n: Notice) -> Task<Message> {
+    crate::alert_popup::show(app, n, Some("The system couldn't show the notification".into()))
+}
+
+/// `> Notifications: send a test alert`. Ignores Do Not Disturb (it was asked for).
+pub fn test(app: &mut App) -> Task<Message> {
+    let n =
+        Notice { key: "test".into(), title: "Calen test alert".into(), body: "This is how event alerts will look".into(), join_url: None };
+    app.notify.remember(n.clone());
+    deliver(app, n)
 }
 
 pub fn report_missed(app: &mut App) {
