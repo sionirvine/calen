@@ -78,14 +78,79 @@ fn toolbar(app: &App, p: Palette) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    container(row![left, Space::new().width(Length::Fill), right].align_y(Alignment::Center))
-        .padding([8, 12])
-        .style(move |_| container::Style {
-            background: Some(p.bg.into()),
-            border: iced::Border { color: p.grid, width: 0.0, radius: 0.0.into() },
-            ..Default::default()
-        })
-        .into()
+    let bar = row![
+        container(row![left, Space::new().width(Length::Fill), right].align_y(Alignment::Center)).padding(Padding {
+            top: 8.0,
+            bottom: 8.0,
+            left: 12.0,
+            right: 10.0
+        }),
+        window_controls(app, p),
+    ];
+    // Empty parts of the bar move the window; buttons capture their own clicks.
+    title_drag_area(container(bar).style(move |_| container::Style {
+        background: Some(p.bg.into()),
+        border: iced::Border { color: p.grid, width: 0.0, radius: 0.0.into() },
+        ..Default::default()
+    }))
+}
+
+/// Invisible grab strips along the window edges (the window has no system frame).
+/// The middle is empty space, so clicks there reach the layers below.
+fn resize_edges<'a>() -> Element<'a, Message> {
+    use iced::mouse::Interaction;
+    use iced::window::Direction;
+    const E: f32 = 5.0;
+    let grip = |w: Length, h: Length, dir: Direction, cursor: Interaction| -> Element<'a, Message> {
+        mouse_area(Space::new().width(w).height(h)).on_press(Message::WinResize(dir)).interaction(cursor).into()
+    };
+    let (fill, e) = (Length::Fill, Length::Fixed(E));
+    column![
+        row![
+            grip(e, e, Direction::NorthWest, Interaction::ResizingDiagonallyDown),
+            grip(fill, e, Direction::North, Interaction::ResizingVertically),
+            grip(e, e, Direction::NorthEast, Interaction::ResizingDiagonallyUp),
+        ],
+        row![
+            grip(e, fill, Direction::West, Interaction::ResizingHorizontally),
+            Space::new().width(fill).height(fill),
+            grip(e, fill, Direction::East, Interaction::ResizingHorizontally),
+        ]
+        .height(fill),
+        row![
+            grip(e, e, Direction::SouthWest, Interaction::ResizingDiagonallyUp),
+            grip(fill, e, Direction::South, Interaction::ResizingVertically),
+            grip(e, e, Direction::SouthEast, Interaction::ResizingDiagonallyDown),
+        ],
+    ]
+    .into()
+}
+
+/// Makes `content` behave like a title bar: drag to move, double-click to maximize.
+pub fn title_drag_area<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    mouse_area(content).on_press(Message::WinDrag).on_double_click(Message::WinToggleMaximize).into()
+}
+
+/// Minimize / maximize-restore / close, flush with the window's top-right corner.
+fn window_controls(app: &App, p: Palette) -> Element<'_, Message> {
+    let cap = |icon: iced::widget::svg::Handle, close: bool, msg: Message| {
+        button(container(icons::icon(icon, 15.0, p.text)).center(Length::Fill))
+            .style(theme::caption_button(close))
+            .padding(0)
+            .width(Length::Fixed(46.0))
+            .height(Length::Fixed(40.0))
+            .on_press(msg)
+    };
+    let close = match app.main_window {
+        Some(id) => Message::CloseRequested(id),
+        None => Message::ShowMain,
+    };
+    row![
+        cap(icons::win_min(), false, Message::WinMinimize),
+        cap(if app.main_maximized { icons::win_restore() } else { icons::win_max() }, false, Message::WinToggleMaximize),
+        cap(icons::win_close(), true, close),
+    ]
+    .into()
 }
 
 fn content(app: &App, p: Palette) -> Element<'_, Message> {
@@ -143,6 +208,9 @@ fn main_window(app: &App) -> Element<'_, Message> {
     let base: Element<'_, Message> = if app.settings.sidebar_visible { row![sidebar::view(app), main].into() } else { main.into() };
 
     let mut layers = vec![base];
+    if !app.main_maximized {
+        layers.push(resize_edges());
+    }
     if let Some(q) = &app.quick {
         layers.push(modal(quick_add(app, q, p), Message::CloseOverlay, false));
     }

@@ -296,12 +296,20 @@ fn calendars_list<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {
 
 pub fn view<'a>(app: &'a App) -> Element<'a, Message> {
     let p = app.palette();
-    let top = row![
-        button(icons::icon(icons::sidebar(), 16.0, p.sidebar_muted)).style(theme::side_ghost).padding(6).on_press(Message::ToggleSidebar),
-        Space::new().width(Length::Fill),
-        button(icons::icon(icons::plus(), 18.0, p.sidebar_text)).style(theme::side_ghost).padding(5).on_press(Message::OpenQuickAdd(None)),
-    ]
-    .align_y(Alignment::Center);
+    let top = crate::views::title_drag_area(
+        row![
+            button(icons::icon(icons::sidebar(), 16.0, p.sidebar_muted))
+                .style(theme::side_ghost)
+                .padding(6)
+                .on_press(Message::ToggleSidebar),
+            Space::new().width(Length::Fill),
+            button(icons::icon(icons::plus(), 18.0, p.sidebar_text))
+                .style(theme::side_ghost)
+                .padding(5)
+                .on_press(Message::OpenQuickAdd(None)),
+        ]
+        .align_y(Alignment::Center),
+    );
 
     let body: Element<'a, Message> = if app.show_calendars {
         calendars_list(app, p)

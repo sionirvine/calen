@@ -179,6 +179,22 @@ pub fn ghost(theme: &Theme, status: button::Status) -> button::Style {
     button::Style { background: bg, text_color: p.text, border: Border { radius: 6.0.into(), ..Default::default() }, ..Default::default() }
 }
 
+/// Window caption buttons (minimize / maximize / close) in the toolbar.
+pub fn caption_button(close: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let p = palette(theme);
+        let red = Color::from_rgb8(0xC4, 0x2B, 0x1C);
+        let bg = match (status, close) {
+            (button::Status::Hovered, true) => Some(Background::Color(red)),
+            (button::Status::Pressed, true) => Some(Background::Color(with_alpha(red, 0.8))),
+            (button::Status::Hovered, false) => Some(Background::Color(p.surface_alt)),
+            (button::Status::Pressed, false) => Some(Background::Color(p.grid_strong)),
+            _ => None,
+        };
+        button::Style { background: bg, text_color: p.text, ..Default::default() }
+    }
+}
+
 /// Flat button on the dark sidebar.
 pub fn side_ghost(theme: &Theme, status: button::Status) -> button::Style {
     let p = palette(theme);

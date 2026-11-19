@@ -124,17 +124,23 @@ pub fn init_tray(dnd: bool) -> bool {
         emit(PlatformEvent::Menu(action));
     }));
     TrayIconEvent::set_event_handler(Some(|e: TrayIconEvent| {
-        if let TrayIconEvent::Click { position, rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-            emit(PlatformEvent::TrayClick {
-                x: position.x,
-                y: position.y,
-                rect: Some((rect.position.x, rect.position.y, rect.size.width as f64, rect.size.height as f64)),
-            });
+        match e {
+            TrayIconEvent::Click { position, rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } => {
+                emit(PlatformEvent::TrayClick {
+                    x: position.x,
+                    y: position.y,
+                    rect: Some((rect.position.x, rect.position.y, rect.size.width as f64, rect.size.height as f64)),
+                });
+            }
+            // The first click of the pair has opened the flyout; opening the
+            // main window closes it again.
+            TrayIconEvent::DoubleClick { button: MouseButton::Left, .. } => emit(PlatformEvent::Menu(MenuAction::Open)),
+            _ => {}
         }
     }));
 
     let built = TrayIconBuilder::new()
-        .with_tooltip("Calen")
+        .with_tooltip(super::tray_tooltip(dnd))
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .with_icon(match tray_icon(dnd, false) {
@@ -173,8 +179,7 @@ pub fn update_tray(dnd: bool, problem: bool) {
             if t.dnd_item.is_checked() != dnd {
                 t.dnd_item.set_checked(dnd);
             }
-            let tip = if dnd { "Calen — Do Not Disturb" } else { "Calen" };
-            let _ = t.icon.set_tooltip(Some(tip));
+            let _ = t.icon.set_tooltip(Some(super::tray_tooltip(dnd)));
         }
     });
 }

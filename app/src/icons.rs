@@ -22,6 +22,14 @@ macro_rules! icon {
     };
 }
 
+// Window caption glyphs (thin, Windows 11 style).
+icon!(win_min, r#"<path d="M5 12h14" stroke-width="1.4"/>"#);
+icon!(win_max, r#"<rect x="5" y="5" width="14" height="14" rx="1.5" stroke-width="1.4"/>"#);
+icon!(
+    win_restore,
+    r#"<rect x="5" y="8" width="11" height="11" rx="1.5" stroke-width="1.4"/><path d="M8.5 8V6.5A1.5 1.5 0 0 1 10 5h7.5A1.5 1.5 0 0 1 19 6.5V14a1.5 1.5 0 0 1-1.5 1.5H16" stroke-width="1.4"/>"#
+);
+icon!(win_close, r#"<path d="M6 6l12 12M18 6L6 18" stroke-width="1.4"/>"#);
 icon!(chevron_left, r#"<path d="M15 6l-6 6 6 6"/>"#);
 icon!(chevron_right, r#"<path d="M9 6l6 6-6 6"/>"#);
 icon!(chevron_down, r#"<path d="M6 9l6 6 6-6"/>"#);
