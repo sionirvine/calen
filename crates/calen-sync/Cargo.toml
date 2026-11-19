@@ -2,6 +2,7 @@
 name = "calen-sync"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 calen-core.workspace = true

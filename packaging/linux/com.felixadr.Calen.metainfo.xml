@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.felixadr.Calen</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Calen</name>
+  <summary>A fast calendar that lives in your tray</summary>
+  <developer id="com.felixadr">
+    <name>Felix Adrian</name>
+  </developer>
+  <description>
+    <p>
+      Calen is a fast, native calendar with no web view. It lives in the system tray,
+      syncs with CalDAV servers such as Nextcloud and Radicale, and works offline.
+    </p>
+    <ul>
+      <li>Day, week and month views: drag to move, resize and create events</li>
+      <li>Quick add from one line of text, such as “Lunch with Sam tomorrow 12:30 /work !15m”</li>
+      <li>A command palette to search events and change settings</li>
+      <li>Reminders with Join and Snooze, held back during Do Not Disturb and games</li>
+      <li>Offline-first CalDAV sync that keeps both versions when an event conflicts</li>
+      <li>Join buttons for Zoom, Meet and Teams links, and map links for places</li>
+      <li>Optional photos on events, stored on a host you choose</li>
+    </ul>
+    <p>
+      On GNOME, the tray icon needs the AppIndicator extension. Without it, Calen keeps
+      running in the background and shows a notification with Open and Quit.
+    </p>
+  </description>
+  <launchable type="desktop-id">com.felixadr.Calen.desktop</launchable>
+  <url type="homepage">https://github.com/sionirvine/calen</url>
+  <url type="bugtracker">https://github.com/sionirvine/calen/issues</url>
+  <url type="vcs-browser">https://github.com/sionirvine/calen</url>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/sionirvine/calen/v0.1.6/docs/screenshots/main.png</image>
+      <caption>The week view with the mini-month and this week's events</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/sionirvine/calen/v0.1.6/docs/screenshots/flyout.png</image>
+      <caption>This week at a glance from the tray</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/sionirvine/calen/v0.1.6/docs/screenshots/palette.png</image>
+      <caption>The command palette for events, commands and settings</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/sionirvine/calen/v0.1.6/docs/screenshots/images.png</image>
+      <caption>Photos attached to an event</caption>
+    </screenshot>
+  </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#ffd6d7</color>
+    <color type="primary" scheme_preference="dark">#6b1f22</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+  </supports>
+  <releases>
+    <release version="0.1.7" date="2026-11-19">
+      <description>
+        <p>First Flatpak release. Autostart uses the Background portal, and updates come from Flatpak.</p>
+      </description>
+    </release>
+    <release version="0.1.6" date="2026-11-19"/>
+    <release version="0.1.5" date="2026-11-19"/>
+    <release version="0.1.4" date="2026-11-19"/>
+  </releases>
+</component>
