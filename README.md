@@ -4,13 +4,21 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 [iced](https://iced.rs). No web view. It lives in the system tray, syncs with CalDAV
 (tested against Nextcloud and Radicale), and works offline.
 
+![Calen's week view with the sidebar's mini-month and agenda](docs/screenshots/main.png)
+
+| Tray flyout | Command palette | Event photos |
+|:---:|:---:|:---:|
+| ![The tray flyout: mini-month and this week's events, today first](docs/screenshots/flyout.png) | ![The command palette listing commands](docs/screenshots/palette.png) | ![The event editor with three photo thumbnails](docs/screenshots/images.png) |
+| This week at a glance from the tray | `Ctrl+P` for events, commands and settings | Images attached to an event |
+
 ## Features
 
 - **Tray app.** Starts at login (`--minimized`), and close/minimize hides it to the tray
   (each can be switched off: `> Close to tray`, `> Minimize to tray`).
-  Left-click the tray icon for a flyout with a mini-month and upcoming events (double-click
-  opens the main window on Windows); click a day
-  to list that whole week, click anywhere outside to close it. Right-click
+  Left-click the tray icon for a flyout with a mini-month and this week's events, opened
+  with today at the top (scroll up for earlier days; double-click the icon to open the main
+  window on Windows). Click a day to list its week, *Upcoming* or the date for the next two
+  weeks, and anywhere outside to close it. Right-click
   opens a menu (Open, New Event, Do Not Disturb, Sync Now, Quit). The tray icon shows
   today's date. Only one copy runs at a time; launching it again brings the window back.
 - **Own title bar.** No system title bar: minimize / maximize / close sit in the toolbar,
@@ -86,6 +94,10 @@ cargo test --workspace
 ```
 
 To try it without touching your real data, set `CALEN_DATA_DIR` to a scratch folder.
+
+The screenshots above come from a scratch folder with `--seed` (no real accounts). In debug
+builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo palette|editor`
+opens the palette or an event with photos; `scripts/shot.ps1` saves a Calen window to PNG.
 
 **Debian/Ubuntu build dependencies:**
 

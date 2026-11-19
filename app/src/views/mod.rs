@@ -131,6 +131,23 @@ pub fn title_drag_area<'a>(content: impl Into<Element<'a, Message>>) -> Element<
     mouse_area(content).on_press(Message::WinDrag).on_double_click(Message::WinToggleMaximize).into()
 }
 
+/// A text link with an underline. iced text has no underline, so a 1 px rule is
+/// drawn under the label.
+pub fn underlined_link<'a>(label: &'a str, size: f32, color: iced::Color, msg: Message) -> Element<'a, Message> {
+    button(
+        column![
+            text(label).size(size).color(color),
+            container(Space::new().width(Length::Fill).height(1))
+                .style(move |_| container::Style { background: Some(color.into()), ..Default::default() }),
+        ]
+        .width(Length::Shrink),
+    )
+    .style(theme::link)
+    .padding([2, 2])
+    .on_press(msg)
+    .into()
+}
+
 /// Minimize / maximize-restore / close, flush with the window's top-right corner.
 fn window_controls(app: &App, p: Palette) -> Element<'_, Message> {
     let cap = |icon: iced::widget::svg::Handle, close: bool, msg: Message| {

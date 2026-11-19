@@ -131,13 +131,28 @@ pub fn main_area(theme: &Theme) -> container::Style {
     container::Style { background: Some(p.bg.into()), text_color: Some(p.text), ..Default::default() }
 }
 
+/// Set at start when the CPU renderer (tiny-skia) is used.
+static CPU_RENDERING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_cpu_rendering(on: bool) {
+    CPU_RENDERING.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn popover(theme: &Theme) -> container::Style {
     let p = palette(theme);
+    // No drop shadow on the CPU renderer: it paints shadows outside the area it is
+    // repainting, so when only part of the window was redrawn (the today column
+    // each minute, say) the shadow piled up over the dialog and turned it black.
+    let shadow = if CPU_RENDERING.load(std::sync::atomic::Ordering::Relaxed) {
+        Shadow::default()
+    } else {
+        Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.35), offset: Vector::new(0.0, 8.0), blur_radius: 28.0 }
+    };
     container::Style {
         background: Some(p.surface.into()),
         text_color: Some(p.text),
         border: Border { color: p.grid_strong, width: 1.0, radius: 12.0.into() },
-        shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.35), offset: Vector::new(0.0, 8.0), blur_radius: 28.0 },
+        shadow,
         snap: true,
     }
 }

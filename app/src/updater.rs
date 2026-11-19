@@ -6,8 +6,8 @@
 //! 3. Stage it and show "Update ready — restart to apply".
 //! 4. On the next launch (or "Restart now"), swap the executable / AppImage.
 
-use iced::widget::{Space, button, column, container, row, text};
-use iced::{Alignment, Color, Element, Length, Subscription, Task};
+use iced::widget::{Space, button, container, row, text};
+use iced::{Alignment, Color, Element, Subscription, Task};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -338,18 +338,7 @@ pub fn banner<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
     }
     let fg = Color::WHITE;
     let muted = theme::with_alpha(fg, 0.7);
-    // iced text has no underline; draw a 1 px rule under the label instead.
-    let restart = button(
-        column![
-            text("Restart").size(12.5).color(p.accent),
-            container(Space::new().width(Length::Fill).height(1))
-                .style(move |_| container::Style { background: Some(p.accent.into()), ..Default::default() }),
-        ]
-        .width(Length::Shrink),
-    )
-    .style(theme::link)
-    .padding([2, 2])
-    .on_press(Message::Update(UpdateMsg::RestartNow));
+    let restart = crate::views::underlined_link("Restart", 12.5, p.accent, Message::Update(UpdateMsg::RestartNow));
     let close =
         button(text("×").size(15).color(muted)).style(theme::link).padding([0, 4]).on_press(Message::Update(UpdateMsg::DismissBanner));
     let content = row![

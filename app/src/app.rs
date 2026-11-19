@@ -59,8 +59,9 @@ pub enum Message {
     Images(crate::image_tasks::ImageMsg),
     Viewer(crate::viewer::ViewerMsg),
     FlyoutNew,
-    /// Flyout mini-month click: list that day's week (None = back to upcoming).
+    /// List the week of that day in the flyout (None = the upcoming list).
     FlyoutWeek(Option<NaiveDate>),
+    FlyoutMeasured(crate::flyout::Part, f32),
     FlyoutReady(window::Id, u64),
     FlyoutFocus(window::Id, u32),
     Popup(crate::alert_popup::PopupMsg),
@@ -79,6 +80,8 @@ pub enum Message {
     WinResize(window::Direction),
     MaximizedChanged(bool),
     TrimMemory,
+    /// Dev aid (`--demo palette|editor`): open that screen.
+    Demo(String),
     SystemTheme(iced::theme::Mode),
 }
 
@@ -155,7 +158,7 @@ impl App {
             Store::open_in_memory().expect("in-memory sqlite")
         });
         if std::env::args().any(|a| a == "--seed") && store.objects().map(|o| o.is_empty()).unwrap_or(false) {
-            crate::seed::seed(&store);
+            crate::seed::seed(&store, &flags.data_dir.join("thumbs"));
         }
         let settings: Settings = store.setting(Settings::KEY).ok().flatten().unwrap_or_default();
         let data = Data::load(&store);
@@ -215,16 +218,23 @@ impl App {
             let _ = crate::platform::set_autostart(true);
         }
         let upd = crate::updater::boot(&mut app);
-        // Dev aid: `--flyout` opens the tray flyout 4 s after start, as if the tray icon
-        // was clicked (the delay lets you move focus elsewhere first, like a real tray click).
-        let flyout = if cfg!(debug_assertions) && std::env::args().any(|a| a == "--flyout") {
+        // Dev aids, in debug builds or with CALEN_DEV set:
+        // `--flyout` opens the tray flyout 4 s after start, as if the tray icon was
+        // clicked (the delay lets you move focus elsewhere first, like a real tray click).
+        let dev = cfg!(debug_assertions) || std::env::var_os("CALEN_DEV").is_some();
+        let flyout = if dev && std::env::args().any(|a| a == "--flyout") {
             Task::perform(tokio::time::sleep(std::time::Duration::from_secs(4)), |_| {
                 Message::Platform(crate::platform::PlatformEvent::TrayClick { x: 100_000.0, y: 100_000.0, rect: None })
             })
         } else {
             Task::none()
         };
-        (app, Task::batch([task, sync, upd, flyout]))
+        // `--demo palette|editor` opens that screen after start (README screenshots).
+        let demo = match std::env::args().skip_while(|a| a != "--demo").nth(1) {
+            Some(what) if dev => Task::perform(tokio::time::sleep(std::time::Duration::from_secs(2)), move |_| Message::Demo(what.clone())),
+            _ => Task::none(),
+        };
+        (app, Task::batch([task, sync, upd, flyout, demo]))
     }
 
     pub fn palette(&self) -> Palette {
@@ -786,8 +796,8 @@ impl App {
                 let close = crate::flyout::close(self);
                 return Task::batch([close, self.open_quick_add(None)]);
             }
-            Message::FlyoutWeek(Some(d)) => crate::flyout::pick_week(self, d),
-            Message::FlyoutWeek(None) => self.flyout.week = None,
+            Message::FlyoutWeek(w) => return crate::flyout::show_week(self, w),
+            Message::FlyoutMeasured(part, h) => return crate::flyout::measured(self, part, h),
             Message::FlyoutReady(id, raw) => return crate::flyout::ready(self, id, raw),
             Message::FlyoutFocus(id, attempt) => return crate::flyout::focus(self, id, attempt),
             Message::Popup(m) => return crate::alert_popup::update(self, m),
@@ -812,6 +822,15 @@ impl App {
                 }
             }
             Message::MaximizedChanged(m) => self.main_maximized = m,
+            Message::Demo(what) => match what.as_str() {
+                "palette" => return crate::palette::open(self, ">"),
+                "editor" => {
+                    if let Some(key) = self.occs.iter().find(|o| o.title.contains("photos")).map(|o| o.key.clone()) {
+                        return self.open_editor_for(&key);
+                    }
+                }
+                _ => {}
+            },
             Message::TrimMemory => {
                 // Only when nothing is on screen; otherwise pages come right back.
                 if !self.main_visible && !crate::flyout::is_open(self) {

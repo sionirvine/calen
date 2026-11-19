@@ -3,9 +3,10 @@
 
 use chrono::Datelike;
 use chrono::{Local, NaiveDate};
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::scrollable::AbsoluteOffset;
+use iced::widget::{Space, button, column, container, operation, row, scrollable, sensor, text};
 use iced::{Alignment, Element, Font, Length, Padding, Size, Task, font, window};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::app::{App, Message};
 use crate::icons;
@@ -24,9 +25,26 @@ pub struct FlyoutState {
     /// Currently on screen.
     pub shown: bool,
     pub closed_at: Option<Instant>,
-    /// First day of the week picked in the mini-month; None = upcoming agenda.
+    /// First day of the week listed; None = upcoming agenda.
     pub week: Option<NaiveDate>,
+    /// Measured heights: the days of this week before today, today onward, and
+    /// the visible list. Used to open the list with today at the top.
+    pub past_h: Option<f32>,
+    pub tail_h: Option<f32>,
+    pub view_h: Option<f32>,
+    /// Until then, new measurements re-apply the scroll to today.
+    pub scroll_until: Option<Instant>,
 }
+
+/// A part of the flyout list whose height was measured.
+#[derive(Debug, Clone, Copy)]
+pub enum Part {
+    Past,
+    Tail,
+    Viewport,
+}
+
+const LIST_SCROLL: &str = "flyout-list";
 
 const FOCUS_ATTEMPTS: u32 = 12;
 
@@ -47,13 +65,14 @@ pub fn toggle(app: &mut App, x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>)
         return Task::none();
     }
     app.mini_month = crate::app::first_of_month(Local::now().date_naive());
-    app.flyout.week = None;
+    app.flyout.week = Some(this_week(app));
     app.refresh_occurrences(false);
+    let scroll = scroll_to_today(app);
     let pos = crate::platform::flyout_position(x, y, rect, SIZE);
     app.flyout.shown = true;
 
     if let Some(id) = app.flyout.id {
-        let mut tasks = vec![window::move_to(id, pos), window::set_mode(id, window::Mode::Windowed)];
+        let mut tasks = vec![window::move_to(id, pos), window::set_mode(id, window::Mode::Windowed), scroll];
         if let Some(raw) = app.flyout.raw {
             crate::platform::watch_outside_clicks(raw);
             tasks.push(focus_later(id, 0));
@@ -77,6 +96,58 @@ pub fn toggle(app: &mut App, x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>)
     // Ask for the native handle only once the window exists; asked earlier, the
     // request finds no window and silently yields nothing.
     open.then(|id| window::raw_id::<Message>(id).map(move |raw| Message::FlyoutReady(id, raw)))
+}
+
+fn this_week(app: &App) -> NaiveDate {
+    crate::app::start_of_week(Local::now().date_naive(), app.settings.week_start_day())
+}
+
+/// Days of `week` before today, or None when the week doesn't contain today.
+fn days_before_today(week: NaiveDate) -> Option<i64> {
+    let n = (Local::now().date_naive() - week).num_days();
+    (0..7).contains(&n).then_some(n)
+}
+
+/// Scroll the list so today's heading is the first line (the top for other
+/// weeks and the upcoming list), and keep doing so for a moment while the
+/// parts are measured.
+fn scroll_to_today(app: &mut App) -> Task<Message> {
+    app.flyout.scroll_until = Some(Instant::now() + Duration::from_millis(800));
+    apply_scroll(app)
+}
+
+fn apply_scroll(app: &App) -> Task<Message> {
+    let y = match app.flyout.week.and_then(days_before_today) {
+        Some(n) if n > 0 => app.flyout.past_h.unwrap_or(0.0),
+        _ => 0.0,
+    };
+    operation::scroll_to(LIST_SCROLL, AbsoluteOffset { x: 0.0, y })
+}
+
+pub fn measured(app: &mut App, part: Part, h: f32) -> Task<Message> {
+    let slot = match part {
+        Part::Past => &mut app.flyout.past_h,
+        Part::Tail => &mut app.flyout.tail_h,
+        Part::Viewport => &mut app.flyout.view_h,
+    };
+    *slot = Some(h);
+    if app.flyout.shown && app.flyout.scroll_until.is_some_and(|t| Instant::now() < t) {
+        return apply_scroll(app);
+    }
+    Task::none()
+}
+
+/// List the week of `day` (None = the upcoming list).
+pub fn show_week(app: &mut App, day: Option<NaiveDate>) -> Task<Message> {
+    app.flyout.week = day.map(|d| crate::app::start_of_week(d, app.settings.week_start_day()));
+    if let Some(d) = day {
+        let first = crate::app::first_of_month(d);
+        if first != app.mini_month {
+            app.mini_month = first;
+        }
+    }
+    app.refresh_occurrences(false);
+    scroll_to_today(app)
 }
 
 /// The flyout window exists: watch clicks outside it and pull it to the front.
@@ -152,17 +223,6 @@ pub fn close(app: &mut App) -> Task<Message> {
     window::set_mode(id, window::Mode::Hidden)
 }
 
-/// A day in the flyout's mini-month was clicked: list that week.
-pub fn pick_week(app: &mut App, d: NaiveDate) {
-    let start = crate::app::start_of_week(d, app.settings.week_start_day());
-    app.flyout.week = if app.flyout.week == Some(start) { None } else { Some(start) };
-    let first = crate::app::first_of_month(d);
-    if first != app.mini_month {
-        app.mini_month = first;
-    }
-    app.refresh_occurrences(false);
-}
-
 pub fn close_requested(app: &mut App, id: window::Id) -> Task<Message> {
     if app.flyout.id == Some(id) {
         // Alt+F4 hides it like any other dismissal.
@@ -213,7 +273,7 @@ pub fn view(app: &App) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let today = Local::now().date_naive();
-    let (list, list_header): (Element<'_, Message>, Option<Element<'_, Message>>) = match app.flyout.week {
+    let (list, head): (Element<'_, Message>, Element<'_, Message>) = match app.flyout.week {
         Some(start) => {
             let end = start + chrono::Duration::days(6);
             let label = if start.month() == end.month() {
@@ -224,34 +284,45 @@ pub fn view(app: &App) -> Element<'_, Message> {
             let head = row![
                 text(label).size(12).font(bold).color(p.sidebar_text),
                 Space::new().width(Length::Fill),
-                button(text("Upcoming").size(11.5).color(p.sidebar_muted))
-                    .style(theme::side_ghost)
-                    .padding([3, 8])
-                    .on_press(Message::FlyoutWeek(None)),
+                crate::views::underlined_link("Upcoming", 11.5, p.sidebar_muted, Message::FlyoutWeek(None)),
             ]
             .align_y(Alignment::Center);
-            (sidebar::agenda(app, p, start, 7, true), Some(container(head).padding([0, 14]).into()))
+            (week_list(app, p, start), head.into())
         }
-        None => (sidebar::agenda(app, p, today, 14, false), None),
+        None => {
+            let head = row![
+                text("Upcoming").size(12).font(bold).color(p.sidebar_text),
+                Space::new().width(Length::Fill),
+                crate::views::underlined_link("This week", 11.5, p.sidebar_muted, Message::FlyoutWeek(Some(today))),
+            ]
+            .align_y(Alignment::Center);
+            (sidebar::agenda(app, p, today, 14, false, Some("No upcoming events")), head.into())
+        }
     };
 
-    let mut body =
-        column![container(header).padding([10, 12]), container(sidebar::mini_month(app, p, sidebar::MiniTarget::Flyout)).padding([0, 14])]
-            .spacing(6);
-    if let Some(h) = list_header {
-        body = body.push(h);
-    }
+    let body = column![
+        container(header).padding([10, 12]),
+        container(sidebar::mini_month(app, p, sidebar::MiniTarget::Flyout)).padding([0, 14]),
+        container(head).padding([0, 14]),
+    ]
+    .spacing(6);
     let banner: Element<'_, Message> = match crate::updater::banner(app, p) {
         Some(b) => container(b).center_x(Length::Fill).padding([0, 8]).into(),
         None => Space::new().into(),
     };
     container(
-        body.extend([scrollable(container(list).padding(Padding { top: 0.0, right: 14.0, bottom: 8.0, left: 14.0 }))
-            .style(theme::side_scroll)
-            .height(Length::Fill)
-            .into()])
-            .push(banner)
-            .push(container(footer).padding([6, 8])),
+        body.push(
+            sensor(
+                scrollable(container(list).padding(Padding { top: 0.0, right: 14.0, bottom: 8.0, left: 14.0 }))
+                    .id(iced::widget::Id::new(LIST_SCROLL))
+                    .style(theme::side_scroll)
+                    .height(Length::Fill),
+            )
+            .on_show(|s| Message::FlyoutMeasured(Part::Viewport, s.height))
+            .on_resize(|s| Message::FlyoutMeasured(Part::Viewport, s.height)),
+        )
+        .push(banner)
+        .push(container(footer).padding([6, 8])),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -260,5 +331,35 @@ pub fn view(app: &App) -> Element<'_, Message> {
         s.border = iced::Border { color: theme::with_alpha(p.sidebar_muted, 0.25), width: 1.0, radius: 10.0.into() };
         s
     })
+    .into()
+}
+
+/// The listed week: the days before today, then today onward, each measured so
+/// the list can open with today at the top. A spacer below lets the list scroll
+/// that far even when the rest of the week is short.
+fn week_list(app: &App, p: theme::Palette, start: NaiveDate) -> Element<'_, Message> {
+    let (past, tail, room): (Element<'_, Message>, Element<'_, Message>, f32) = match days_before_today(start) {
+        Some(n) => {
+            let past = if n > 0 { sidebar::agenda(app, p, start, n, true, None) } else { Space::new().into() };
+            let tail = sidebar::agenda(app, p, start + chrono::Duration::days(n), 7 - n, true, None);
+            let room = match (app.flyout.view_h, app.flyout.tail_h) {
+                // 8 = the list's bottom padding.
+                (Some(v), Some(t)) if n > 0 => (v - t - 8.0).max(0.0),
+                _ => 0.0,
+            };
+            (past, tail, room)
+        }
+        None => (Space::new().into(), sidebar::agenda(app, p, start, 7, true, Some("Nothing this week")), 0.0),
+    };
+    // Same structure for every week, so the sensors keep their state.
+    column![
+        sensor(past)
+            .on_show(|s| Message::FlyoutMeasured(Part::Past, s.height))
+            .on_resize(|s| Message::FlyoutMeasured(Part::Past, s.height)),
+        sensor(tail)
+            .on_show(|s| Message::FlyoutMeasured(Part::Tail, s.height))
+            .on_resize(|s| Message::FlyoutMeasured(Part::Tail, s.height)),
+        Space::new().height(room),
+    ]
     .into()
 }
