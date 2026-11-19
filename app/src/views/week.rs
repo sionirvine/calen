@@ -457,7 +457,7 @@ impl<'a> Program<GridMsg> for WeekGrid<'a> {
             self.paint(&mut live, state, bounds);
             None
         } else {
-            Some(self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds)))
+            Some(self.cache.draw(renderer, bounds.size(), |f| crate::bench::timed("paint week", || self.paint(f, state, bounds))))
         };
         self.paint_live(&mut live, state, bounds);
         base.into_iter().chain([live.into_geometry()]).collect()
@@ -663,7 +663,7 @@ impl<'a> Program<GridMsg> for AllDayHeader<'a> {
             self.paint(&mut frame, state, bounds);
             return vec![frame.into_geometry()];
         }
-        vec![self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds))]
+        vec![self.cache.draw(renderer, bounds.size(), |f| crate::bench::timed("paint header", || self.paint(f, state, bounds)))]
     }
 
     fn mouse_interaction(&self, state: &HeaderState, bounds: Rectangle, cursor: Cursor) -> mouse::Interaction {

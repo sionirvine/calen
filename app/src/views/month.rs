@@ -350,7 +350,7 @@ impl<'a> Program<GridMsg> for MonthGrid<'a> {
             self.paint(&mut frame, state, bounds);
             return vec![frame.into_geometry()];
         }
-        vec![self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds))]
+        vec![self.cache.draw(renderer, bounds.size(), |f| crate::bench::timed("paint month", || self.paint(f, state, bounds)))]
     }
 
     fn mouse_interaction(&self, state: &State, bounds: Rectangle, cursor: Cursor) -> mouse::Interaction {

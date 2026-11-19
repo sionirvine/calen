@@ -121,6 +121,20 @@ builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo pale
 opens the palette or an event with photos (`--demo pick:+3`, `month-pick:-5` or
 `flyout-pick:+6` picks a date); `scripts/shot.ps1` saves a Calen window to PNG.
 
+For rendering work there are three more aids. They're also available in debug builds or with `CALEN_DEV=1`:
+- `--demo shot:week:/tmp/w.png` shows that view (`day`, `week` or `month`), saves the
+  main window as drawn by the active renderer, and quits.
+- `--demo bench` maximizes the window (or not, with `CALEN_BENCH_WINDOWED=1`), switches
+  views and scrolls the week on a fixed script, logs frame-time p50/p95/max per phase to
+  `calen.log`, and quits.
+- `CALEN_PROFILE=1` logs any `update`, `view` or canvas paint that takes over 8 ms.
+
+Pick the renderer for a run with `ICED_BACKEND=tiny-skia` or `ICED_BACKEND=wgpu`.
+
+`vendor/` holds patched copies of `iced_tiny_skia` and `iced_wgpu`. Each folder's
+`PATCHES.md` explains its changes: a faster CPU renderer, and a fix for missing canvas text
+on the GPU renderer.
+
 **Debian/Ubuntu build dependencies:**
 
 ```bash

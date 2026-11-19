@@ -2,6 +2,7 @@
 
 mod alert_popup;
 mod app;
+mod bench;
 mod edit;
 mod flyout;
 mod icons;
@@ -76,6 +77,14 @@ fn choose_renderer(data_dir: &std::path::Path) {
     theme::set_cpu_rendering(backend.trim().starts_with("tiny-skia"));
 }
 
+fn update(app: &mut App, message: app::Message) -> iced::Task<app::Message> {
+    bench::timed("update", || app.update(message))
+}
+
+fn view(app: &App, window: iced::window::Id) -> iced::Element<'_, app::Message> {
+    bench::timed("view", || views::view(app, window))
+}
+
 fn main() -> iced::Result {
     env_logger::Builder::from_env(
         env_logger::Env::default()
@@ -114,7 +123,11 @@ fn main() -> iced::Result {
     }
 
     let flags = std::sync::Mutex::new(Some(Flags { start_minimized, data_dir }));
-    iced::daemon(move || App::boot(flags.lock().unwrap().take().expect("boot once")), App::update, views::view)
+    iced::daemon(
+        move || App::boot(flags.lock().unwrap().take().expect("boot once")),
+        update,
+        view,
+    )
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
