@@ -2,7 +2,7 @@
 
 use chrono::{Datelike, Duration, NaiveDate};
 use iced::mouse::{self, Cursor};
-use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Program};
+use iced::widget::canvas::{self, Event, Frame, Geometry, Path, Program, Stroke};
 use iced::{Point, Rectangle, Renderer, Size, Theme};
 use std::time::Instant;
 
@@ -24,6 +24,7 @@ pub struct MonthGrid<'a> {
     pub selected_date: NaiveDate,
     pub today: NaiveDate,
     pub time_24h: bool,
+    pub cache: &'a canvas::Cache,
 }
 
 #[derive(Default)]
@@ -39,6 +40,145 @@ enum Item {
 }
 
 impl<'a> MonthGrid<'a> {
+    fn paint(&self, frame: &mut Frame, state: &State, bounds: Rectangle) {
+        let p = &self.palette;
+        let c = self.cell(&bounds);
+        grid::rect(frame, Rectangle::new(Point::ORIGIN, bounds.size()), p.bg);
+
+        // Weekday header
+        for col in 0..7 {
+            let d = self.first + Duration::days(col);
+            let name = d.format("%a").to_string().to_uppercase();
+            grid::text_right(frame, &name, Point::new((col + 1) as f32 * c.width - 10.0, HEAD_H / 2.0), 11.0, p.muted, BOLD);
+        }
+
+        let drag_target = state.drag.filter(|d| d.3).map(|d| d.2);
+        for row in 0..6 {
+            for col in 0..7 {
+                let date = self.first + Duration::days(row * 7 + col);
+                let x = col as f32 * c.width;
+                let y = HEAD_H + row as f32 * c.height;
+                let in_month = date.month() == self.month;
+                let weekend = matches!(date.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun);
+                let mut bg = if !in_month {
+                    theme::mix(p.bg, p.surface_alt, if p.dark { 0.35 } else { 0.5 })
+                } else if weekend {
+                    p.weekend
+                } else {
+                    p.bg
+                };
+                if drag_target == Some(date) {
+                    bg = theme::with_alpha(p.today, 0.18);
+                }
+                grid::rect(frame, Rectangle::new(Point::new(x, y), c), bg);
+
+                let num = if date.day() == 1 { date.format("%b %-d").to_string() } else { date.format("%-d").to_string() };
+                let color = if in_month { p.text } else { p.faint };
+                let picked = date == self.selected_date;
+                let pill_w = (num.chars().count() as f32 * 7.5 + 14.0).max(24.0);
+                let pill = Rectangle::new(Point::new(x + c.width - pill_w - 5.0, y + 4.0), Size::new(pill_w, 19.0));
+                if picked {
+                    let ring = Rectangle::new(Point::new(pill.x - 2.0, pill.y - 2.0), Size::new(pill.width + 4.0, pill.height + 4.0));
+                    frame.stroke(
+                        &Path::rounded_rectangle(ring.position(), ring.size(), 11.5.into()),
+                        Stroke::default().with_color(p.accent).with_width(1.5),
+                    );
+                }
+                if date == self.today {
+                    grid::rounded(frame, pill, 9.5, p.today);
+                    grid::text_centered(frame, &num, Point::new(pill.x + pill_w / 2.0, pill.y + 9.5), 12.5, iced::Color::WHITE, BOLD);
+                } else if picked {
+                    grid::text_centered(frame, &num, Point::new(pill.x + pill_w / 2.0, pill.y + 9.5), 12.5, p.text, BOLD);
+                } else {
+                    grid::text_right(
+                        frame,
+                        &num,
+                        Point::new(x + c.width - 10.0, y + 13.5),
+                        12.5,
+                        color,
+                        if date.day() == 1 { BOLD } else { iced::Font::DEFAULT },
+                    );
+                }
+            }
+        }
+        for row in 0..=6 {
+            grid::hline(frame, HEAD_H + row as f32 * c.height, 0.0, bounds.width, p.grid);
+        }
+        for col in 1..7 {
+            grid::vline(frame, col as f32 * c.width, HEAD_H, bounds.height, p.grid);
+        }
+
+        let dragging = state.drag.filter(|d| d.3).map(|d| d.0);
+        for it in self.items(&bounds) {
+            match it {
+                Item::Bar { idx, rect } => {
+                    let o = self.occs[idx];
+                    let sel = self.selected.is_some_and(|k| *k == o.key);
+                    let mut fill = if sel { o.color } else { theme::event_fill(p, o.color) };
+                    if dragging == Some(idx) {
+                        fill = theme::with_alpha(fill, 0.4);
+                    }
+                    grid::rounded(frame, rect, 4.0, fill);
+                    let fg = if sel { iced::Color::WHITE } else { theme::event_text(p, o.color) };
+                    grid::text(frame, &o.title, Point::new(rect.x + 6.0, rect.y + 2.0), 11.5, fg, BOLD, rect.width - 8.0);
+                }
+                Item::Row { idx, rect } => {
+                    let o = self.occs[idx];
+                    let sel = self.selected.is_some_and(|k| *k == o.key);
+                    if sel {
+                        grid::rounded(frame, rect, 4.0, o.color);
+                    } else if dragging == Some(idx) {
+                        grid::rounded(frame, rect, 4.0, theme::with_alpha(o.color, 0.2));
+                    }
+                    let fg = if sel { iced::Color::WHITE } else { p.text };
+                    frame.fill(
+                        &Path::circle(Point::new(rect.x + 6.0, rect.y + rect.height / 2.0), 3.5),
+                        if sel { iced::Color::WHITE } else { o.color },
+                    );
+                    let time = grid::fmt_time(o.start, self.time_24h);
+                    let time_w = time.chars().count() as f32 * 6.2 + 6.0;
+                    let title_w = rect.width - 16.0 - time_w;
+                    grid::text(frame, &o.title, Point::new(rect.x + 14.0, rect.y + 2.0), 11.5, fg, BOLD, title_w);
+                    grid::text_right(
+                        frame,
+                        &time,
+                        Point::new(rect.x + rect.width - 4.0, rect.y + rect.height / 2.0),
+                        10.5,
+                        if sel { fg } else { p.muted },
+                        iced::Font::DEFAULT,
+                    );
+                }
+                Item::More { count, rect, .. } => {
+                    grid::text(
+                        frame,
+                        &format!("+{count} more"),
+                        Point::new(rect.x + 6.0, rect.y + 2.0),
+                        11.0,
+                        p.muted,
+                        BOLD,
+                        rect.width - 8.0,
+                    );
+                }
+            }
+        }
+
+        // Ghost under cursor while dragging
+        if let Some((idx, grab, cur, true, _)) = state.drag {
+            let o = self.occs[idx];
+            let delta = (cur - grab).num_days();
+            let d = o.start.date_naive() + Duration::days(delta);
+            let off = (d - self.first).num_days();
+            if (0..42).contains(&off) {
+                let r = Rectangle::new(
+                    Point::new((off % 7) as f32 * c.width + 3.0, HEAD_H + (off / 7) as f32 * c.height + TOP),
+                    Size::new(c.width - 6.0, LANE - 2.0),
+                );
+                grid::rounded(frame, r, 4.0, o.color);
+                grid::text(frame, &o.title, Point::new(r.x + 6.0, r.y + 2.0), 11.5, iced::Color::WHITE, BOLD, r.width - 8.0);
+            }
+        }
+    }
+
     fn cell(&self, b: &Rectangle) -> Size {
         Size::new(b.width / 7.0, (b.height - HEAD_H) / 6.0)
     }
@@ -205,137 +345,12 @@ impl<'a> Program<GridMsg> for MonthGrid<'a> {
     }
 
     fn draw(&self, state: &State, renderer: &Renderer, _theme: &Theme, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
-        let p = &self.palette;
-        let mut frame = Frame::new(renderer, bounds.size());
-        let c = self.cell(&bounds);
-        grid::rect(&mut frame, Rectangle::new(Point::ORIGIN, bounds.size()), p.bg);
-
-        // Weekday header
-        for col in 0..7 {
-            let d = self.first + Duration::days(col);
-            let name = d.format("%a").to_string().to_uppercase();
-            grid::text_right(&mut frame, &name, Point::new((col + 1) as f32 * c.width - 10.0, HEAD_H / 2.0), 11.0, p.muted, BOLD);
+        if state.drag.is_some_and(|d| d.3) {
+            let mut frame = Frame::new(renderer, bounds.size());
+            self.paint(&mut frame, state, bounds);
+            return vec![frame.into_geometry()];
         }
-
-        let drag_target = state.drag.filter(|d| d.3).map(|d| d.2);
-        for row in 0..6 {
-            for col in 0..7 {
-                let date = self.first + Duration::days(row * 7 + col);
-                let x = col as f32 * c.width;
-                let y = HEAD_H + row as f32 * c.height;
-                let in_month = date.month() == self.month;
-                let weekend = matches!(date.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun);
-                let mut bg = if !in_month {
-                    theme::mix(p.bg, p.surface_alt, if p.dark { 0.35 } else { 0.5 })
-                } else if weekend {
-                    p.weekend
-                } else {
-                    p.bg
-                };
-                if date == self.selected_date {
-                    bg = theme::mix(bg, p.selection, 0.6);
-                }
-                if drag_target == Some(date) {
-                    bg = theme::with_alpha(p.today, 0.18);
-                }
-                grid::rect(&mut frame, Rectangle::new(Point::new(x, y), c), bg);
-
-                let num = if date.day() == 1 { date.format("%b %-d").to_string() } else { date.format("%-d").to_string() };
-                let color = if in_month { p.text } else { p.faint };
-                if date == self.today {
-                    let w = (num.chars().count() as f32 * 7.5 + 14.0).max(24.0);
-                    let r = Rectangle::new(Point::new(x + c.width - w - 5.0, y + 4.0), Size::new(w, 19.0));
-                    grid::rounded(&mut frame, r, 9.5, p.accent);
-                    grid::text_centered(&mut frame, &num, Point::new(r.x + w / 2.0, r.y + 9.5), 12.5, iced::Color::WHITE, BOLD);
-                } else {
-                    grid::text_right(
-                        &mut frame,
-                        &num,
-                        Point::new(x + c.width - 10.0, y + 13.5),
-                        12.5,
-                        color,
-                        if date.day() == 1 { BOLD } else { iced::Font::DEFAULT },
-                    );
-                }
-            }
-        }
-        for row in 0..=6 {
-            grid::hline(&mut frame, HEAD_H + row as f32 * c.height, 0.0, bounds.width, p.grid);
-        }
-        for col in 1..7 {
-            grid::vline(&mut frame, col as f32 * c.width, HEAD_H, bounds.height, p.grid);
-        }
-
-        let dragging = state.drag.filter(|d| d.3).map(|d| d.0);
-        for it in self.items(&bounds) {
-            match it {
-                Item::Bar { idx, rect } => {
-                    let o = self.occs[idx];
-                    let sel = self.selected.is_some_and(|k| *k == o.key);
-                    let mut fill = if sel { o.color } else { theme::event_fill(p, o.color) };
-                    if dragging == Some(idx) {
-                        fill = theme::with_alpha(fill, 0.4);
-                    }
-                    grid::rounded(&mut frame, rect, 4.0, fill);
-                    let fg = if sel { iced::Color::WHITE } else { theme::event_text(p, o.color) };
-                    grid::text(&mut frame, &o.title, Point::new(rect.x + 6.0, rect.y + 2.0), 11.5, fg, BOLD, rect.width - 8.0);
-                }
-                Item::Row { idx, rect } => {
-                    let o = self.occs[idx];
-                    let sel = self.selected.is_some_and(|k| *k == o.key);
-                    if sel {
-                        grid::rounded(&mut frame, rect, 4.0, o.color);
-                    } else if dragging == Some(idx) {
-                        grid::rounded(&mut frame, rect, 4.0, theme::with_alpha(o.color, 0.2));
-                    }
-                    let fg = if sel { iced::Color::WHITE } else { p.text };
-                    frame.fill(
-                        &Path::circle(Point::new(rect.x + 6.0, rect.y + rect.height / 2.0), 3.5),
-                        if sel { iced::Color::WHITE } else { o.color },
-                    );
-                    let time = grid::fmt_time(o.start, self.time_24h);
-                    let time_w = time.chars().count() as f32 * 6.2 + 6.0;
-                    let title_w = rect.width - 16.0 - time_w;
-                    grid::text(&mut frame, &o.title, Point::new(rect.x + 14.0, rect.y + 2.0), 11.5, fg, BOLD, title_w);
-                    grid::text_right(
-                        &mut frame,
-                        &time,
-                        Point::new(rect.x + rect.width - 4.0, rect.y + rect.height / 2.0),
-                        10.5,
-                        if sel { fg } else { p.muted },
-                        iced::Font::DEFAULT,
-                    );
-                }
-                Item::More { count, rect, .. } => {
-                    grid::text(
-                        &mut frame,
-                        &format!("+{count} more"),
-                        Point::new(rect.x + 6.0, rect.y + 2.0),
-                        11.0,
-                        p.muted,
-                        BOLD,
-                        rect.width - 8.0,
-                    );
-                }
-            }
-        }
-
-        // Ghost under cursor while dragging
-        if let Some((idx, grab, cur, true, _)) = state.drag {
-            let o = self.occs[idx];
-            let delta = (cur - grab).num_days();
-            let d = o.start.date_naive() + Duration::days(delta);
-            let off = (d - self.first).num_days();
-            if (0..42).contains(&off) {
-                let r = Rectangle::new(
-                    Point::new((off % 7) as f32 * c.width + 3.0, HEAD_H + (off / 7) as f32 * c.height + TOP),
-                    Size::new(c.width - 6.0, LANE - 2.0),
-                );
-                grid::rounded(&mut frame, r, 4.0, o.color);
-                grid::text(&mut frame, &o.title, Point::new(r.x + 6.0, r.y + 2.0), 11.5, iced::Color::WHITE, BOLD, r.width - 8.0);
-            }
-        }
-        vec![frame.into_geometry()]
+        vec![self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds))]
     }
 
     fn mouse_interaction(&self, state: &State, bounds: Rectangle, cursor: Cursor) -> mouse::Interaction {

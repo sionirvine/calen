@@ -4,7 +4,7 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 [iced](https://iced.rs). No web view. It lives in the system tray, syncs with CalDAV
 (tested against Nextcloud and Radicale), and works offline.
 
-![Calen's week view with the sidebar's mini-month and agenda](docs/screenshots/main.png)
+![Calen's week view with the sidebar's mini-month and this week's events](docs/screenshots/main.png)
 
 | Tray flyout | Command palette | Event photos |
 |:---:|:---:|:---:|
@@ -17,12 +17,15 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   (each can be switched off: `> Close to tray`, `> Minimize to tray`).
   Left-click the tray icon for a flyout with a mini-month and this week's events, opened
   with today at the top (scroll up for earlier days; double-click the icon to open the main
-  window on Windows). Click a day to list its week, *Upcoming* or the date for the next two
-  weeks, and anywhere outside to close it. Right-click
+  window on Windows). Click a day to list its week with that day at the top, *Upcoming* or
+  the date for the next two weeks, and anywhere outside to close it. Right-click
   opens a menu (Open, New Event, Do Not Disturb, Sync Now, Quit). The tray icon shows
   today's date. Only one copy runs at a time; launching it again brings the window back.
 - **Own title bar.** No system title bar: minimize / maximize / close sit in the toolbar,
   and dragging (or double-clicking) the toolbar moves (or maximizes) the window.
+- **This week in the sidebar.** The main window's sidebar lists the week of the chosen
+  day. Click a date (in the week header, the mini-month or the month grid) to pick it: it
+  turns red and moves to the top of the list, while today stays blue.
 - **Day / Week / Month views.** Drag events to move them, drag the bottom edge to change
   the length, drag on empty space to create an event, and double-click to open one.
   Multi-day and all-day bars can be dragged across days. For a repeating event you choose
@@ -97,7 +100,8 @@ To try it without touching your real data, set `CALEN_DATA_DIR` to a scratch fol
 
 The screenshots above come from a scratch folder with `--seed` (no real accounts). In debug
 builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo palette|editor`
-opens the palette or an event with photos; `scripts/shot.ps1` saves a Calen window to PNG.
+opens the palette or an event with photos (`--demo pick:+3`, `month-pick:-5` or
+`flyout-pick:+6` picks a date); `scripts/shot.ps1` saves a Calen window to PNG.
 
 **Debian/Ubuntu build dependencies:**
 

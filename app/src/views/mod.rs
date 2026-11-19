@@ -170,14 +170,31 @@ fn window_controls(app: &App, p: Palette) -> Element<'_, Message> {
     .into()
 }
 
+/// Everything a grid's static layer is drawn from, hashed.
+fn grid_key(app: &App, p: Palette, occs: &[&Occ], days: &[chrono::NaiveDate]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    days.hash(&mut h);
+    grid::occs_key(&mut h, occs);
+    app.selected.hash(&mut h);
+    app.anchor.hash(&mut h);
+    app.now.date_naive().hash(&mut h);
+    app.settings.time_24h.hash(&mut h);
+    std::mem::discriminant(&app.view).hash(&mut h);
+    format!("{p:?}").hash(&mut h);
+    h.finish()
+}
+
 fn content(app: &App, p: Palette) -> Element<'_, Message> {
     let days = app.visible_days();
     let (first, last) = (days[0], *days.last().unwrap());
     let in_range: Vec<&Occ> = app.occs.iter().filter(|o| o.start.date_naive() <= last && o.last_day() >= first).collect();
     let el: Element<'_, grid::GridMsg> = match app.view {
         ViewKind::Month => {
+            let first = start_of_week(first_of_month(app.anchor), app.settings.week_start_day());
+            let key = grid_key(app, p, &in_range, &[first]);
             let g = month::MonthGrid {
-                first: start_of_week(first_of_month(app.anchor), app.settings.week_start_day()),
+                first,
                 month: app.anchor.month(),
                 occs: in_range,
                 palette: p,
@@ -185,6 +202,7 @@ fn content(app: &App, p: Palette) -> Element<'_, Message> {
                 selected_date: app.anchor,
                 today: app.now.date_naive(),
                 time_24h: app.settings.time_24h,
+                cache: app.grid_caches.month.with_key(key),
             };
             canvas(g).width(Length::Fill).height(Length::Fill).into()
         }
@@ -192,13 +210,16 @@ fn content(app: &App, p: Palette) -> Element<'_, Message> {
             let (spanning, timed): (Vec<&Occ>, Vec<&Occ>) = in_range.into_iter().partition(|o| o.spans_days());
             let header_h = week::AllDayHeader::height(&spanning, &days);
             let header = week::AllDayHeader {
+                cache: app.grid_caches.header.with_key(grid_key(app, p, &spanning, &days)),
                 days: days.clone(),
                 occs: spanning,
                 palette: p,
                 selected: app.selected.as_ref(),
                 today: app.now.date_naive(),
+                active: app.anchor,
             };
             let grid = week::WeekGrid {
+                cache: app.grid_caches.week.with_key(grid_key(app, p, &timed, &days)),
                 days,
                 occs: timed,
                 palette: p,

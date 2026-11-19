@@ -24,6 +24,8 @@ pub struct WeekGrid<'a> {
     pub selected: Option<&'a OccKey>,
     pub now: DateTime<Local>,
     pub time_24h: bool,
+    /// Static layer (everything but the now-line and drag feedback).
+    pub cache: &'a canvas::Cache,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,6 +129,115 @@ impl<'a> WeekGrid<'a> {
             }
         }
         out
+    }
+
+    fn paint(&self, frame: &mut Frame, state: &State, bounds: Rectangle) {
+        let p = &self.palette;
+        let w = bounds.width;
+        let col_w = self.col_w(&bounds);
+        let today = self.now.date_naive();
+
+        // Gutter background. Besides the colour, it makes the CPU renderer repaint
+        // the hour labels when the grid scrolls: it repaints where shapes are, and
+        // compares text without the scroll offset, so labels on an empty gutter
+        // kept their old positions.
+        grid::rect(frame, Rectangle::new(Point::ORIGIN, Size::new(GUTTER, bounds.height)), p.bg);
+
+        // Column backgrounds
+        for (d, day) in self.days.iter().enumerate() {
+            let x = GUTTER + d as f32 * col_w;
+            let bg = if *day == today {
+                theme::with_alpha(p.today, if p.dark { 0.07 } else { 0.05 })
+            } else if matches!(chrono::Datelike::weekday(day), chrono::Weekday::Sat | chrono::Weekday::Sun) {
+                p.weekend
+            } else {
+                p.bg
+            };
+            grid::rect(frame, Rectangle::new(Point::new(x, 0.0), Size::new(col_w, bounds.height)), bg);
+        }
+
+        // Hour lines + labels
+        for h in 0..24 {
+            let y = h as f32 * HOUR_H;
+            grid::hline(frame, y, GUTTER, w, p.grid);
+            grid::hline(frame, y + HOUR_H / 2.0, GUTTER, w, theme::with_alpha(p.grid, 0.45));
+            if h > 0 {
+                let label = if self.time_24h {
+                    format!("{h:02}:00")
+                } else {
+                    match h {
+                        12 => "noon".to_string(),
+                        h if h < 12 => format!("{h} AM"),
+                        h => format!("{} PM", h - 12),
+                    }
+                };
+                grid::text_right(frame, &label, Point::new(GUTTER - 8.0, y), 11.0, p.muted, iced::Font::DEFAULT);
+            }
+        }
+        for d in 0..=self.days.len() {
+            grid::vline(frame, GUTTER + d as f32 * col_w, 0.0, bounds.height, p.grid);
+        }
+
+        // Events
+        let blocks = self.layout(&bounds);
+        let dragging_idx = state.drag.as_ref().and_then(|d| self.dragged_times(d)).map(|(i, _, _)| i);
+        for b in &blocks {
+            let o = self.occs[b.idx];
+            if dragging_idx == Some(b.idx) {
+                // Leave a faint placeholder where it was.
+                grid::rounded(frame, b.rect, 5.0, theme::with_alpha(o.color, 0.18));
+                continue;
+            }
+            self.draw_block(frame, o, b.rect, false);
+        }
+    }
+
+    fn paint_live(&self, frame: &mut Frame, state: &State, bounds: Rectangle) {
+        let p = &self.palette;
+        let w = bounds.width;
+        let col_w = self.col_w(&bounds);
+        let today = self.now.date_naive();
+        // Drag ghost
+        if let Some((idx, start, end)) = state.drag.as_ref().and_then(|d| self.dragged_times(d)) {
+            let o = self.occs[idx];
+            if let Some(day) = self.days.iter().position(|d| *d == start.date_naive()) {
+                let s = (start - local_midnight(self.days[day])).num_minutes() as f32;
+                let e = (end - local_midnight(self.days[day])).num_minutes() as f32;
+                let r = Rectangle::new(
+                    Point::new(GUTTER + day as f32 * col_w + 2.0, s / 60.0 * HOUR_H + 1.0),
+                    Size::new(col_w - 5.0, ((e - s) / 60.0 * HOUR_H - 2.0).max(16.0)),
+                );
+                let mut ghost = o.clone();
+                ghost.start = start;
+                ghost.end = end;
+                self.draw_block(frame, &ghost, r, true);
+            }
+        }
+
+        // New-event selection
+        if let Some(Drag::Create { day, anchor, cur, moved: true }) = state.drag {
+            let (a, b) = if cur < anchor { (cur, anchor) } else { (anchor, cur) };
+            let r = Rectangle::new(
+                Point::new(GUTTER + day as f32 * col_w + 2.0, a as f32 / 60.0 * HOUR_H),
+                Size::new(col_w - 5.0, ((b - a) as f32 / 60.0 * HOUR_H).max(4.0)),
+            );
+            grid::rounded(frame, r, 5.0, theme::with_alpha(p.today, 0.25));
+            let label = format!("{} – {}", grid::fmt_time(self.at(day, a), self.time_24h), grid::fmt_time(self.at(day, b), self.time_24h));
+            grid::text(frame, &label, Point::new(r.x + 6.0, r.y + 3.0), 11.0, p.text, BOLD, r.width - 8.0);
+        }
+
+        // Now line
+        if let Some(d) = self.days.iter().position(|d| *d == today) {
+            let mins = (self.now - local_midnight(today)).num_minutes() as f32;
+            let y = mins / 60.0 * HOUR_H;
+            let x0 = GUTTER + d as f32 * col_w;
+            grid::rect(frame, Rectangle::new(Point::new(GUTTER, y - 0.5), Size::new(w - GUTTER, 1.0)), theme::with_alpha(p.now_line, 0.35));
+            grid::rect(frame, Rectangle::new(Point::new(x0, y - 1.0), Size::new(col_w, 2.0)), p.now_line);
+            frame.fill(&Path::circle(Point::new(x0, y), 4.5), p.now_line);
+            let label = grid::fmt_time(self.now, self.time_24h);
+            grid::rounded(frame, Rectangle::new(Point::new(4.0, y - 8.0), Size::new(GUTTER - 10.0, 16.0)), 8.0, p.now_line);
+            grid::text_centered(frame, &label, Point::new(4.0 + (GUTTER - 10.0) / 2.0, y), 10.5, iced::Color::WHITE, BOLD);
+        }
     }
 
     fn hit(&self, blocks: &[Block], p: Point) -> Option<Block> {
@@ -340,113 +451,16 @@ impl<'a> Program<GridMsg> for WeekGrid<'a> {
     }
 
     fn draw(&self, state: &State, renderer: &Renderer, _theme: &Theme, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
-        let p = &self.palette;
-        let mut frame = Frame::new(renderer, bounds.size());
-        let w = bounds.width;
-        let col_w = self.col_w(&bounds);
-        let today = self.now.date_naive();
-
-        // Gutter background. Besides the colour, it makes the CPU renderer repaint
-        // the hour labels when the grid scrolls: it repaints where shapes are, and
-        // compares text without the scroll offset, so labels on an empty gutter
-        // kept their old positions.
-        grid::rect(&mut frame, Rectangle::new(Point::ORIGIN, Size::new(GUTTER, bounds.height)), p.bg);
-
-        // Column backgrounds
-        for (d, day) in self.days.iter().enumerate() {
-            let x = GUTTER + d as f32 * col_w;
-            let bg = if *day == today {
-                theme::with_alpha(p.today, if p.dark { 0.07 } else { 0.05 })
-            } else if matches!(chrono::Datelike::weekday(day), chrono::Weekday::Sat | chrono::Weekday::Sun) {
-                p.weekend
-            } else {
-                p.bg
-            };
-            grid::rect(&mut frame, Rectangle::new(Point::new(x, 0.0), Size::new(col_w, bounds.height)), bg);
-        }
-
-        // Hour lines + labels
-        for h in 0..24 {
-            let y = h as f32 * HOUR_H;
-            grid::hline(&mut frame, y, GUTTER, w, p.grid);
-            grid::hline(&mut frame, y + HOUR_H / 2.0, GUTTER, w, theme::with_alpha(p.grid, 0.45));
-            if h > 0 {
-                let label = if self.time_24h {
-                    format!("{h:02}:00")
-                } else {
-                    match h {
-                        12 => "noon".to_string(),
-                        h if h < 12 => format!("{h} AM"),
-                        h => format!("{} PM", h - 12),
-                    }
-                };
-                grid::text_right(&mut frame, &label, Point::new(GUTTER - 8.0, y), 11.0, p.muted, iced::Font::DEFAULT);
-            }
-        }
-        for d in 0..=self.days.len() {
-            grid::vline(&mut frame, GUTTER + d as f32 * col_w, 0.0, bounds.height, p.grid);
-        }
-
-        // Events
-        let blocks = self.layout(&bounds);
-        let dragging_idx = state.drag.as_ref().and_then(|d| self.dragged_times(d)).map(|(i, _, _)| i);
-        for b in &blocks {
-            let o = self.occs[b.idx];
-            if dragging_idx == Some(b.idx) {
-                // Leave a faint placeholder where it was.
-                grid::rounded(&mut frame, b.rect, 5.0, theme::with_alpha(o.color, 0.18));
-                continue;
-            }
-            self.draw_block(&mut frame, o, b.rect, false);
-        }
-
-        // Drag ghost
-        if let Some((idx, start, end)) = state.drag.as_ref().and_then(|d| self.dragged_times(d)) {
-            let o = self.occs[idx];
-            if let Some(day) = self.days.iter().position(|d| *d == start.date_naive()) {
-                let s = (start - local_midnight(self.days[day])).num_minutes() as f32;
-                let e = (end - local_midnight(self.days[day])).num_minutes() as f32;
-                let r = Rectangle::new(
-                    Point::new(GUTTER + day as f32 * col_w + 2.0, s / 60.0 * HOUR_H + 1.0),
-                    Size::new(col_w - 5.0, ((e - s) / 60.0 * HOUR_H - 2.0).max(16.0)),
-                );
-                let mut ghost = o.clone();
-                ghost.start = start;
-                ghost.end = end;
-                self.draw_block(&mut frame, &ghost, r, true);
-            }
-        }
-
-        // New-event selection
-        if let Some(Drag::Create { day, anchor, cur, moved: true }) = state.drag {
-            let (a, b) = if cur < anchor { (cur, anchor) } else { (anchor, cur) };
-            let r = Rectangle::new(
-                Point::new(GUTTER + day as f32 * col_w + 2.0, a as f32 / 60.0 * HOUR_H),
-                Size::new(col_w - 5.0, ((b - a) as f32 / 60.0 * HOUR_H).max(4.0)),
-            );
-            grid::rounded(&mut frame, r, 5.0, theme::with_alpha(p.today, 0.25));
-            let label = format!("{} – {}", grid::fmt_time(self.at(day, a), self.time_24h), grid::fmt_time(self.at(day, b), self.time_24h));
-            grid::text(&mut frame, &label, Point::new(r.x + 6.0, r.y + 3.0), 11.0, p.text, BOLD, r.width - 8.0);
-        }
-
-        // Now line
-        if let Some(d) = self.days.iter().position(|d| *d == today) {
-            let mins = (self.now - local_midnight(today)).num_minutes() as f32;
-            let y = mins / 60.0 * HOUR_H;
-            let x0 = GUTTER + d as f32 * col_w;
-            grid::rect(
-                &mut frame,
-                Rectangle::new(Point::new(GUTTER, y - 0.5), Size::new(w - GUTTER, 1.0)),
-                theme::with_alpha(p.now_line, 0.35),
-            );
-            grid::rect(&mut frame, Rectangle::new(Point::new(x0, y - 1.0), Size::new(col_w, 2.0)), p.now_line);
-            frame.fill(&Path::circle(Point::new(x0, y), 4.5), p.now_line);
-            let label = grid::fmt_time(self.now, self.time_24h);
-            grid::rounded(&mut frame, Rectangle::new(Point::new(4.0, y - 8.0), Size::new(GUTTER - 10.0, 16.0)), 8.0, p.now_line);
-            grid::text_centered(&mut frame, &label, Point::new(4.0 + (GUTTER - 10.0) / 2.0, y), 10.5, iced::Color::WHITE, BOLD);
-        }
-
-        vec![frame.into_geometry()]
+        let mut live = Frame::new(renderer, bounds.size());
+        let base = if state.drag.is_some() {
+            // The dragged block must leave the static layer, so draw it all fresh.
+            self.paint(&mut live, state, bounds);
+            None
+        } else {
+            Some(self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds)))
+        };
+        self.paint_live(&mut live, state, bounds);
+        base.into_iter().chain([live.into_geometry()]).collect()
     }
 
     fn mouse_interaction(&self, state: &State, bounds: Rectangle, cursor: Cursor) -> mouse::Interaction {
@@ -476,6 +490,9 @@ pub struct AllDayHeader<'a> {
     pub palette: Palette,
     pub selected: Option<&'a OccKey>,
     pub today: NaiveDate,
+    /// The picked day (red ring); today keeps its blue circle.
+    pub active: NaiveDate,
+    pub cache: &'a canvas::Cache,
 }
 
 pub const HEADER_H: f32 = 52.0;
@@ -509,6 +526,63 @@ impl<'a> AllDayHeader<'a> {
                 (i, r)
             })
             .collect()
+    }
+
+    fn paint(&self, frame: &mut Frame, state: &HeaderState, bounds: Rectangle) {
+        let p = &self.palette;
+        let cw = self.col_w(&bounds);
+        grid::rect(frame, Rectangle::new(Point::ORIGIN, bounds.size()), p.bg);
+
+        for (d, day) in self.days.iter().enumerate() {
+            let x = GUTTER + d as f32 * cw;
+            let is_today = *day == self.today;
+            let picked = *day == self.active && self.days.len() > 1;
+            let wd = day.format("%a").to_string().to_uppercase();
+            let wd_color = if is_today {
+                p.today
+            } else if picked {
+                p.accent
+            } else {
+                p.muted
+            };
+            grid::text(frame, &wd, Point::new(x + 8.0, 8.0), 11.0, wd_color, BOLD, cw - 10.0);
+            let num = day.format("%-d").to_string();
+            let center = Point::new(x + 22.0, 34.0);
+            if is_today {
+                frame.fill(&Path::circle(center, 14.0), p.today);
+                grid::text_centered(frame, &num, center, 16.0, iced::Color::WHITE, BOLD);
+            } else if picked {
+                grid::text_centered(frame, &num, center, 16.0, p.text, BOLD);
+            } else {
+                grid::text(frame, &num, Point::new(x + 8.0, 23.0), 20.0, p.text, iced::Font::DEFAULT, cw - 10.0);
+            }
+            if picked {
+                frame.stroke(
+                    &Path::circle(center, if is_today { 16.0 } else { 14.0 }),
+                    Stroke::default().with_color(p.accent).with_width(1.5),
+                );
+            }
+            grid::vline(frame, x, HEADER_H - 4.0, bounds.height, p.grid);
+        }
+        grid::text_right(frame, "all-day", Point::new(GUTTER - 8.0, HEADER_H + LANE_H / 2.0), 10.5, p.muted, iced::Font::DEFAULT);
+        grid::hline(frame, bounds.height - 1.0, 0.0, bounds.width, p.grid_strong);
+
+        let drag = state.drag.filter(|d| d.3);
+        for (i, r) in self.bars(&bounds) {
+            let o = self.occs[i];
+            let mut r = r;
+            if let Some((di, grab, cur, _, _)) = drag
+                && di == i
+            {
+                grid::rounded(frame, r, 4.0, theme::with_alpha(o.color, 0.18));
+                r.x += (cur as f32 - grab as f32) * cw;
+            }
+            let selected = self.selected.is_some_and(|k| *k == o.key);
+            let fill = if selected { o.color } else { theme::event_fill(p, o.color) };
+            grid::rounded(frame, r, 4.0, fill);
+            let fg = if selected { iced::Color::WHITE } else { theme::event_text(p, o.color) };
+            grid::text(frame, &o.title, Point::new(r.x + 7.0, r.y + 3.0), 12.0, fg, BOLD, r.width - 10.0);
+        }
     }
 
     fn col_at(&self, x: f32, b: &Rectangle) -> usize {
@@ -584,45 +658,12 @@ impl<'a> Program<GridMsg> for AllDayHeader<'a> {
     }
 
     fn draw(&self, state: &HeaderState, renderer: &Renderer, _theme: &Theme, bounds: Rectangle, _cursor: Cursor) -> Vec<Geometry> {
-        let p = &self.palette;
-        let mut frame = Frame::new(renderer, bounds.size());
-        let cw = self.col_w(&bounds);
-        grid::rect(&mut frame, Rectangle::new(Point::ORIGIN, bounds.size()), p.bg);
-
-        for (d, day) in self.days.iter().enumerate() {
-            let x = GUTTER + d as f32 * cw;
-            let is_today = *day == self.today;
-            let wd = day.format("%a").to_string().to_uppercase();
-            grid::text(&mut frame, &wd, Point::new(x + 8.0, 8.0), 11.0, if is_today { p.today } else { p.muted }, BOLD, cw - 10.0);
-            let num = day.format("%-d").to_string();
-            if is_today {
-                frame.fill(&Path::circle(Point::new(x + 22.0, 34.0), 14.0), p.accent);
-                grid::text_centered(&mut frame, &num, Point::new(x + 22.0, 34.0), 16.0, iced::Color::WHITE, BOLD);
-            } else {
-                grid::text(&mut frame, &num, Point::new(x + 8.0, 23.0), 20.0, p.text, iced::Font::DEFAULT, cw - 10.0);
-            }
-            grid::vline(&mut frame, x, HEADER_H - 4.0, bounds.height, p.grid);
+        if state.drag.is_some_and(|d| d.3) {
+            let mut frame = Frame::new(renderer, bounds.size());
+            self.paint(&mut frame, state, bounds);
+            return vec![frame.into_geometry()];
         }
-        grid::text_right(&mut frame, "all-day", Point::new(GUTTER - 8.0, HEADER_H + LANE_H / 2.0), 10.5, p.muted, iced::Font::DEFAULT);
-        grid::hline(&mut frame, bounds.height - 1.0, 0.0, bounds.width, p.grid_strong);
-
-        let drag = state.drag.filter(|d| d.3);
-        for (i, r) in self.bars(&bounds) {
-            let o = self.occs[i];
-            let mut r = r;
-            if let Some((di, grab, cur, _, _)) = drag
-                && di == i
-            {
-                grid::rounded(&mut frame, r, 4.0, theme::with_alpha(o.color, 0.18));
-                r.x += (cur as f32 - grab as f32) * cw;
-            }
-            let selected = self.selected.is_some_and(|k| *k == o.key);
-            let fill = if selected { o.color } else { theme::event_fill(p, o.color) };
-            grid::rounded(&mut frame, r, 4.0, fill);
-            let fg = if selected { iced::Color::WHITE } else { theme::event_text(p, o.color) };
-            grid::text(&mut frame, &o.title, Point::new(r.x + 7.0, r.y + 3.0), 12.0, fg, BOLD, r.width - 10.0);
-        }
-        vec![frame.into_geometry()]
+        vec![self.cache.draw(renderer, bounds.size(), |f| self.paint(f, state, bounds))]
     }
 
     fn mouse_interaction(&self, state: &HeaderState, bounds: Rectangle, cursor: Cursor) -> mouse::Interaction {

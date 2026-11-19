@@ -150,3 +150,44 @@ pub fn bar_lanes(occs: &[&Occ], first: NaiveDate, ncols: usize) -> Vec<(usize, u
     }
     out
 }
+
+/// A canvas geometry cache that is cleared whenever its inputs' key changes.
+/// Lets the grids keep their drawing across repaints that don't touch them
+/// (hovering a button elsewhere repaints the window).
+#[derive(Default)]
+pub struct KeyedCache {
+    cache: iced::widget::canvas::Cache,
+    key: std::cell::Cell<u64>,
+}
+
+impl KeyedCache {
+    pub fn with_key(&self, key: u64) -> &iced::widget::canvas::Cache {
+        if self.key.replace(key) != key {
+            self.cache.clear();
+        }
+        &self.cache
+    }
+}
+
+#[derive(Default)]
+pub struct GridCaches {
+    pub week: KeyedCache,
+    pub header: KeyedCache,
+    pub month: KeyedCache,
+}
+
+/// Hash of what the grids draw from a set of occurrences.
+pub fn occs_key(h: &mut impl std::hash::Hasher, occs: &[&Occ]) {
+    use std::hash::Hash;
+    for o in occs {
+        o.key.hash(h);
+        o.start.timestamp().hash(h);
+        o.end.timestamp().hash(h);
+        o.all_day.hash(h);
+        o.title.hash(h);
+        o.read_only.hash(h);
+        o.color.r.to_bits().hash(h);
+        o.color.g.to_bits().hash(h);
+        o.color.b.to_bits().hash(h);
+    }
+}
