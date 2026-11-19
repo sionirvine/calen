@@ -25,7 +25,7 @@ use self::other as os;
 pub mod icon;
 pub mod instance;
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 pub const APP_ID: &str = "com.felixadr.Calen";
 
 /// Events coming from OS threads/callbacks into the iced app.
@@ -100,7 +100,7 @@ pub fn init_tray(dnd: bool) {
     let ok = os::init_tray(dnd);
     let _ = TRAY_OK.set(ok);
     if !ok {
-        log::warn!("system tray not available; closing the window will quit");
+        log::warn!("system tray not available");
     }
 }
 
@@ -113,6 +113,28 @@ pub fn tray_tooltip(dnd: bool) -> String {
 
 pub fn tray_available() -> bool {
     TRAY_OK.get().copied().unwrap_or(false)
+}
+
+/// Whether hiding the main window keeps Calen reachable: through the tray, or
+/// on Linux (e.g. GNOME without the AppIndicator extension), by launching Calen
+/// again, which brings the running copy's window back.
+pub fn can_run_in_background() -> bool {
+    tray_available() || cfg!(target_os = "linux")
+}
+
+/// The main window was just hidden. Without a tray (Linux), show a resident
+/// "Calen is running" notification so it's clear Calen didn't quit.
+pub fn entered_background() {
+    #[cfg(target_os = "linux")]
+    if !tray_available() {
+        os::show_running_notice();
+    }
+}
+
+/// The main window is back: remove the "Calen is running" notification.
+pub fn left_background() {
+    #[cfg(target_os = "linux")]
+    os::hide_running_notice();
 }
 
 /// Refresh tray icon (date number / DND badge) and menu state.

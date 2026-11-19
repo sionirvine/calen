@@ -3,9 +3,9 @@
 
 use chrono::{DateTime, Local};
 use iced::mouse::Cursor;
-use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke, path::Arc};
+use iced::widget::canvas::{self, Frame, Geometry, Path, Stroke};
 use iced::widget::{Space, button, canvas as canvas_w, column, container, row, text, text_input, tooltip};
-use iced::{Alignment, Element, Font, Length, Radians, Rectangle, Renderer, Subscription, Task, Theme, font};
+use iced::{Alignment, Element, Font, Length, Rectangle, Renderer, Subscription, Task, Theme, font};
 use std::time::{Duration, Instant};
 
 use crate::app::{App, Message};
@@ -29,7 +29,8 @@ pub struct SyncState {
     pub dirty_since: Option<Instant>,
     pub retry_at: Option<Instant>,
     pub backoff: u64,
-    pub spinner: f32,
+    /// When the current sync started (drives the spinner).
+    pub started: Instant,
     pub queued_again: bool,
     pub last_report: Option<calen_sync::Report>,
     pub dialog: Option<AccountDialog>,
@@ -42,7 +43,7 @@ impl Default for SyncState {
             dirty_since: None,
             retry_at: None,
             backoff: 15,
-            spinner: 0.0,
+            started: Instant::now(),
             queued_again: false,
             last_report: None,
             dialog: None,
@@ -100,31 +101,49 @@ fn start(app: &mut App) -> Task<Message> {
         app.sync.status = Status::NoAccount;
         return Task::none();
     }
+    // Look the passwords up here, on the UI thread. The keyring talks to the
+    // Secret Service through zbus' blocking API, which panics inside a tokio
+    // runtime (zbus is built with its `tokio` feature), so it must not run in
+    // the async task below.
+    let mut creds = Vec::with_capacity(accounts.len());
+    for acc in accounts {
+        let Some(pass) = calen_sync::password_for(&acc) else {
+            let e = format!("No saved password for {}", acc.name);
+            log::warn!("sync failed: {e}");
+            app.sync.status = Status::Error(e);
+            app.sync.dirty_since = None;
+            app.sync.retry_at = Some(Instant::now() + Duration::from_secs(app.sync.backoff.max(60)));
+            app.sync.backoff = (app.sync.backoff * 2).min(600);
+            return Task::none();
+        };
+        creds.push((acc, pass));
+    }
     app.sync.status = Status::Syncing;
+    app.sync.started = Instant::now();
     app.sync.dirty_since = None;
     app.sync.retry_at = None;
     let db = app.data_dir.join("calen.db");
-    Task::perform(
-        async move {
-            let mut total = calen_sync::Report::default();
-            for acc in accounts {
-                let Some(pass) = calen_sync::password_for(&acc) else {
-                    return Err((false, format!("No saved password for {}", acc.name)));
-                };
-                match calen_sync::sync_account(&db, acc, pass).await {
-                    Ok(r) => {
-                        total.pushed += r.pushed;
-                        total.pulled += r.pulled;
-                        total.deleted += r.deleted;
-                        total.conflicts += r.conflicts;
-                        total.calendars += r.calendars;
-                    }
-                    Err(calen_sync::DavError::Offline(e)) => return Err((true, e)),
-                    Err(e) => return Err((false, e.to_string())),
+    let job = async move {
+        let mut total = calen_sync::Report::default();
+        for (acc, pass) in creds {
+            match calen_sync::sync_account(&db, acc, pass).await {
+                Ok(r) => {
+                    total.pushed += r.pushed;
+                    total.pulled += r.pulled;
+                    total.deleted += r.deleted;
+                    total.conflicts += r.conflicts;
+                    total.calendars += r.calendars;
                 }
+                Err(calen_sync::DavError::Offline(e)) => return Err((true, e)),
+                Err(e) => return Err((false, e.to_string())),
             }
-            Ok(total)
-        },
+        }
+        Ok(total)
+    };
+    Task::perform(
+        // Run it as its own task so a panic comes back as an error instead of
+        // leaving the pill on "Syncing…" forever.
+        async move { tokio::spawn(job).await.unwrap_or_else(|e| Err((false, format!("sync crashed: {e}")))) },
         |r| Message::Sync(SyncMsg::Done(r)),
     )
 }
@@ -139,7 +158,7 @@ pub fn update(app: &mut App, msg: SyncMsg) -> Task<Message> {
                 return start(app);
             }
         }
-        SyncMsg::Frame => app.sync.spinner = (app.sync.spinner + 0.7) % (std::f32::consts::TAU),
+        SyncMsg::Frame => {}
         SyncMsg::Done(result) => {
             match result {
                 Ok(report) => {
@@ -237,7 +256,7 @@ pub fn subscription(app: &App) -> Subscription<Message> {
         subs.push(iced::time::every(Duration::from_millis(1000)).map(|_| Message::Sync(SyncMsg::Check)));
     }
     if app.sync.status == Status::Syncing && app.main_visible {
-        subs.push(iced::time::every(Duration::from_millis(80)).map(|_| Message::Sync(SyncMsg::Frame)));
+        subs.push(iced::time::every(Duration::from_millis(33)).map(|_| Message::Sync(SyncMsg::Frame)));
     }
     Subscription::batch(subs)
 }
@@ -255,16 +274,36 @@ impl canvas::Program<Message> for Spinner {
     type State = ();
 
     fn draw(&self, _: &(), renderer: &Renderer, _: &Theme, bounds: Rectangle, _: Cursor) -> Vec<Geometry> {
+        const WIDTH: f32 = 2.0;
         let mut frame = Frame::new(renderer, bounds.size());
         let c = frame.center();
-        let r = bounds.width.min(bounds.height) / 2.0 - 1.5;
-        frame.stroke(&Path::circle(c, r), Stroke::default().with_color(self.track).with_width(2.0));
-        let arc = Path::new(|b| {
-            b.arc(Arc { center: c, radius: r, start_angle: Radians(self.phase), end_angle: Radians(self.phase + 1.9) });
-        });
-        frame.stroke(&arc, Stroke::default().with_color(self.color).with_width(2.0).with_line_cap(canvas::LineCap::Round));
+        // Keep the whole stroke inside the canvas, with a little room for anti-aliasing.
+        let r = bounds.width.min(bounds.height) / 2.0 - WIDTH / 2.0 - 0.5;
+        // Built from explicit points rather than `Path::arc`: the CPU renderer
+        // drew the arc with a stray segment and a misshapen cap.
+        let polyline = |start: f32, sweep: f32, closed: bool| {
+            let steps = ((sweep / std::f32::consts::TAU) * 32.0).ceil().max(2.0) as usize;
+            Path::new(|b| {
+                for i in 0..=steps {
+                    let t = start + sweep * i as f32 / steps as f32;
+                    let pt = iced::Point::new(c.x + r * t.cos(), c.y + r * t.sin());
+                    if i == 0 { b.move_to(pt) } else { b.line_to(pt) }
+                }
+                if closed {
+                    b.close();
+                }
+            })
+        };
+        let stroke = |color| Stroke::default().with_color(color).with_width(WIDTH);
+        frame.stroke(&polyline(0.0, std::f32::consts::TAU, true), stroke(self.track));
+        frame.stroke(&polyline(self.phase, 1.9, false), stroke(self.color).with_line_join(canvas::LineJoin::Round));
         vec![frame.into_geometry()]
     }
+}
+
+/// Spinner angle: one turn per second since the sync started.
+fn spinner_phase(app: &App) -> f32 {
+    (app.sync.started.elapsed().as_secs_f32() * std::f32::consts::TAU) % std::f32::consts::TAU
 }
 
 fn ago(t: DateTime<Local>) -> String {
@@ -292,7 +331,7 @@ pub fn status_pill<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {
             .into();
         }
         Status::Syncing => (
-            canvas_w(Spinner { phase: app.sync.spinner, color: p.today, track: theme::with_alpha(p.today, 0.2) })
+            canvas_w(Spinner { phase: spinner_phase(app), color: p.today, track: theme::with_alpha(p.today, 0.2) })
                 .width(14)
                 .height(14)
                 .into(),
@@ -386,7 +425,7 @@ pub fn status_dot<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {
     let (icon, color) = match &app.sync.status {
         Status::NoAccount => return Space::new().into(),
         Status::Syncing => {
-            return canvas_w(Spinner { phase: app.sync.spinner, color: p.today, track: theme::with_alpha(p.today, 0.2) })
+            return canvas_w(Spinner { phase: spinner_phase(app), color: p.today, track: theme::with_alpha(p.today, 0.2) })
                 .width(14)
                 .height(14)
                 .into();

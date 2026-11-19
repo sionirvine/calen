@@ -88,7 +88,68 @@ impl ksni::Tray for CalenTray {
 
 static HANDLE: OnceLock<Mutex<ksni::blocking::Handle<CalenTray>>> = OnceLock::new();
 
-pub fn early_init() {}
+pub fn early_init() {
+    if let Err(e) = install_desktop_entry() {
+        log::warn!("couldn't install the desktop entry: {e}");
+    }
+}
+
+/// GNOME on Wayland shows a window's icon from the `.desktop` file that matches
+/// its app id, and lists apps in the grid from those files. An AppImage (or a
+/// bare binary) has none, so write one, plus icons, to `~/.local/share`.
+/// Files are only rewritten when their contents change.
+fn install_desktop_entry() -> std::io::Result<()> {
+    let id = super::APP_ID;
+    if std::path::Path::new(&format!("/usr/share/applications/{id}.desktop")).exists() {
+        return Ok(()); // installed by a system package
+    }
+    let Some(exe) = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from).or_else(|| std::env::current_exe().ok()) else {
+        return Ok(());
+    };
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/share")))
+        .ok_or_else(|| std::io::Error::other("no home directory"))?;
+
+    for size in [32u32, 48, 64, 128, 256] {
+        let path = data.join(format!("icons/hicolor/{size}x{size}/apps/{id}.png"));
+        write_if_changed(&path, &icon::png(size))?;
+    }
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Calen\nGenericName=Calendar\nComment=A fast calendar that lives in your tray\n\
+         Exec={}\nIcon={id}\nTerminal=false\nCategories=Office;Calendar;\nStartupWMClass={id}\n",
+        desktop_quote(&exe.to_string_lossy())
+    );
+    write_if_changed(&data.join(format!("applications/{id}.desktop")), entry.as_bytes())
+}
+
+fn write_if_changed(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    if std::fs::read(path).is_ok_and(|old| old == bytes) {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, bytes)
+}
+
+/// Quote a path for a desktop file's `Exec=` key.
+fn desktop_quote(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '%' => out.push_str("%%"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
 
 pub fn init_tray(dnd: bool) -> bool {
     let tray = CalenTray { dnd, problem: false, day: chrono::Datelike::day(&chrono::Local::now()) };
@@ -101,6 +162,80 @@ pub fn init_tray(dnd: bool) -> bool {
             log::warn!("StatusNotifierItem tray unavailable: {e} (on GNOME, enable the AppIndicator extension)");
             false
         }
+    }
+}
+
+/// Without a tray, GNOME can still list Calen under "Background Apps" if the
+/// XDG Background portal accepts it. Best effort: failures are only logged.
+struct RunningNotice {
+    wanted: bool,
+    id: Option<u32>,
+}
+
+static RUNNING_NOTICE: Mutex<RunningNotice> = Mutex::new(RunningNotice { wanted: false, id: None });
+
+/// With no tray icon, this resident notification is what shows that Calen is
+/// still running: it stays in GNOME's notification list until the window is
+/// back, and offers Open / Quit.
+pub fn show_running_notice() {
+    {
+        let mut st = RUNNING_NOTICE.lock().unwrap();
+        if st.wanted {
+            return;
+        }
+        st.wanted = true;
+    }
+    std::thread::spawn(|| {
+        let mut note = notify_rust::Notification::new();
+        note.appname("Calen")
+            .summary("Calen is running in the background")
+            .body("Reminders stay on. For a tray icon, install the AppIndicator extension.")
+            .icon(super::APP_ID)
+            .hint(notify_rust::Hint::DesktopEntry(super::APP_ID.into()))
+            .hint(notify_rust::Hint::Resident(true))
+            .urgency(notify_rust::Urgency::Low)
+            .timeout(notify_rust::Timeout::Never);
+        note.action("default", "Open");
+        note.action("quit", "Quit Calen");
+        let handle = match note.show() {
+            Ok(h) => h,
+            Err(e) => {
+                RUNNING_NOTICE.lock().unwrap().wanted = false;
+                return log::info!("running notice: {e}");
+            }
+        };
+        {
+            let mut st = RUNNING_NOTICE.lock().unwrap();
+            if !st.wanted {
+                // The window came back while we were showing it.
+                drop(st);
+                return handle.close();
+            }
+            st.id = Some(handle.id());
+        }
+        handle.wait_for_action(|action| match action {
+            "default" => emit(PlatformEvent::Notification(NotificationAction::Open(String::new()))),
+            "quit" => emit(PlatformEvent::Menu(MenuAction::Quit)),
+            _ => {}
+        });
+    });
+}
+
+pub fn hide_running_notice() {
+    let id = {
+        let mut st = RUNNING_NOTICE.lock().unwrap();
+        st.wanted = false;
+        st.id.take()
+    };
+    if let (Some(id), Some(conn)) = (id, dbus())
+        && let Ok(p) = zbus::blocking::Proxy::new(
+            &conn,
+            "org.freedesktop.Notifications",
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+        )
+    {
+        let _ = p.call::<_, _, ()>("CloseNotification", &(id,));
     }
 }
 
@@ -117,11 +252,11 @@ pub fn update_tray(dnd: bool, problem: bool) {
 }
 
 pub fn main_window_platform() -> iced::window::settings::PlatformSpecific {
-    iced::window::settings::PlatformSpecific { application_id: "calen".into(), ..Default::default() }
+    iced::window::settings::PlatformSpecific { application_id: super::APP_ID.into(), ..Default::default() }
 }
 
 pub fn flyout_platform() -> iced::window::settings::PlatformSpecific {
-    iced::window::settings::PlatformSpecific { application_id: "calen".into(), ..Default::default() }
+    iced::window::settings::PlatformSpecific { application_id: super::APP_ID.into(), ..Default::default() }
 }
 
 /// SNI gives us the click point (logical on most desktops). Place the panel
@@ -135,8 +270,10 @@ pub fn flyout_position(x: f64, y: f64, _rect: Option<(f64, f64, f64, f64)>, size
     iced::Point::new(px as f32, py as f32)
 }
 
+/// The session bus, connected once and reused (the DND check runs every 20 s).
 fn dbus() -> Option<zbus::blocking::Connection> {
-    zbus::blocking::Connection::session().ok()
+    static CONN: OnceLock<Option<zbus::blocking::Connection>> = OnceLock::new();
+    CONN.get_or_init(|| zbus::blocking::Connection::session().ok()).clone()
 }
 
 pub fn system_quiet_reason() -> Option<&'static str> {
@@ -174,7 +311,12 @@ pub fn system_quiet_reason() -> Option<&'static str> {
 
 pub fn notify(n: &Notice) -> Result<(), String> {
     let mut note = notify_rust::Notification::new();
-    note.appname("Calen").summary(&n.title).body(&n.body).icon("x-office-calendar").timeout(notify_rust::Timeout::Never);
+    note.appname("Calen")
+        .summary(&n.title)
+        .body(&n.body)
+        .icon(super::APP_ID)
+        .hint(notify_rust::Hint::DesktopEntry(super::APP_ID.into()))
+        .timeout(notify_rust::Timeout::Never);
     note.action("default", "Open");
     if n.join_url.is_some() {
         note.action("join", "Join");
