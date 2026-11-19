@@ -78,10 +78,17 @@ fn choose_renderer(data_dir: &std::path::Path) {
 
 fn main() -> iced::Result {
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,wgpu=warn,naga=warn,iced_wgpu=warn,iced_winit=warn,cosmic_text=warn"),
+        env_logger::Env::default()
+            .default_filter_or("info,wgpu=warn,naga=warn,iced_wgpu=warn,iced_winit=warn,cosmic_text=warn,zbus=warn,tracing=warn"),
     )
     .target(env_logger::Target::Pipe(Box::new(LogTee)))
     .init();
+    // Panics (also in background tasks) go to calen.log, not only to stderr.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        default_hook(info);
+    }));
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--export-icons") {
         let dir = args.get(i + 1).map(std::path::PathBuf::from).unwrap_or_else(|| "assets".into());

@@ -14,7 +14,11 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
 ## Features
 
 - **Tray app.** Starts at login (`--minimized`), and close/minimize hides it to the tray
-  (each can be switched off: `> Close to tray`, `> Minimize to tray`).
+  (each can be switched off: `> Close to tray`, `> Minimize to tray`). On GNOME the tray
+  icon needs the AppIndicator extension (`gnome-shell-extension-appindicator`); without it,
+  close/minimize keep Calen running, a *Calen is running* notification (Open / Quit) stays
+  in the notification list, and launching Calen again brings the window back. On Linux,
+  Calen adds itself to the app menu (`~/.local/share/applications`) so it gets its icon.
   Left-click the tray icon for a flyout with a mini-month and this week's events, opened
   with today at the top (scroll up for earlier days; double-click the icon to open the main
   window on Windows). Click a day to list its week with that day at the top, *Upcoming* or

@@ -271,6 +271,7 @@ impl App {
     // windows
 
     pub fn open_main(&mut self) -> Task<Message> {
+        crate::platform::left_background();
         if let Some(id) = self.main_window {
             self.main_visible = true;
             return Task::batch([
@@ -311,6 +312,7 @@ impl App {
         if self.editor.is_none() && self.viewer.is_none() {
             self.images.trim();
         }
+        crate::platform::entered_background();
         Task::batch([window::close(id), trim_memory_later()])
     }
 
@@ -800,7 +802,7 @@ impl App {
             }
             Message::CloseRequested(id) => {
                 if Some(id) == self.main_window {
-                    if self.settings.close_to_tray && crate::platform::tray_available() {
+                    if self.settings.close_to_tray && crate::platform::can_run_in_background() {
                         return self.hide_main();
                     }
                     return iced::exit();
@@ -841,6 +843,11 @@ impl App {
                 }
             }
             Message::WinMinimize => {
+                // Minimize to the tray / background, like the close button. (On
+                // Wayland a minimized window can't be detected or restored.)
+                if self.settings.minimize_to_tray && crate::platform::can_run_in_background() {
+                    return self.hide_main();
+                }
                 if let Some(id) = self.main_window {
                     return window::minimize(id, true);
                 }
@@ -936,7 +943,7 @@ impl App {
             window::Event::Unfocused => return crate::flyout::unfocused(self, id),
             window::Event::Resized(size) if Some(id) == self.main_window && size.width < 1.0 && size.height < 1.0 => {
                 // Minimized (Windows reports a 0x0 resize) -> tuck into the tray.
-                if self.settings.minimize_to_tray && crate::platform::tray_available() && self.main_visible {
+                if self.settings.minimize_to_tray && crate::platform::can_run_in_background() && self.main_visible {
                     return self.hide_main();
                 }
             }
