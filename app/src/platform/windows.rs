@@ -15,9 +15,9 @@ use windows_sys::Win32::UI::Shell::{
     SetCurrentProcessExplicitAppUserModelID,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, CallNextHookEx, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, HHOOK, MSLLHOOKSTRUCT,
-    SPI_GETWORKAREA, SetForegroundWindow, SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN,
-    WM_MBUTTONDOWN, WM_RBUTTONDOWN,
+    AW_BLEND, AW_HIDE, AnimateWindow, BringWindowToTop, CallNextHookEx, GetClassNameW, GetForegroundWindow, GetWindowRect,
+    GetWindowThreadProcessId, HHOOK, IsWindowVisible, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SW_HIDE, SetForegroundWindow, SetWindowsHookExW,
+    ShowWindow, SystemParametersInfoW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN,
 };
 
 use super::{APP_ID, MenuAction, Notice, NotificationAction, PlatformEvent, emit, icon};
@@ -231,14 +231,38 @@ pub fn flyout_position(x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>, size:
     iced::Point::new((px / s) as f32, (py / s) as f32)
 }
 
-/// Bring a window to the front even though the click that opened it went to the tray.
-pub fn force_foreground(raw: u64) {
+/// Try to make `raw` (an HWND) the focused foreground window. Returns true once
+/// it is. Does nothing until the window is visible: iced shows new windows only
+/// after their first frame, and Windows ignores focus requests for hidden ones.
+pub fn try_focus(raw: u64) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_MENU,
+    };
     let hwnd = raw as usize as *mut core::ffi::c_void;
     unsafe {
-        if SetForegroundWindow(hwnd) != 0 && GetForegroundWindow() == hwnd {
-            return;
+        if IsWindowVisible(hwnd) == 0 {
+            return false;
         }
-        // Borrow the foreground thread's input state so Windows allows the switch.
+        if GetForegroundWindow() == hwnd {
+            return true;
+        }
+        if SetForegroundWindow(hwnd) != 0 && GetForegroundWindow() == hwnd {
+            return true;
+        }
+        // A tray click doesn't give us the right to take the foreground. A synthetic
+        // Alt press does (this process then sent the last input); winit uses the same trick.
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: VK_MENU, wScan: 0, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+        };
+        let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+        SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32);
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        if GetForegroundWindow() == hwnd {
+            return true;
+        }
+        // Last resort: borrow the foreground thread's input state.
         let fg = GetForegroundWindow();
         let fg_thread = if fg.is_null() { 0 } else { GetWindowThreadProcessId(fg, std::ptr::null_mut()) };
         let me = GetCurrentThreadId();
@@ -247,6 +271,17 @@ pub fn force_foreground(raw: u64) {
             BringWindowToTop(hwnd);
             SetForegroundWindow(hwnd);
             AttachThreadInput(me, fg_thread, 0);
+        }
+        GetForegroundWindow() == hwnd
+    }
+}
+
+/// Fade a window out (DWM blend, ~120 ms) instead of letting it vanish abruptly.
+pub fn fade_out(raw: u64) {
+    let hwnd = raw as usize as *mut core::ffi::c_void;
+    unsafe {
+        if IsWindowVisible(hwnd) != 0 && AnimateWindow(hwnd, 120, AW_HIDE | AW_BLEND) == 0 {
+            ShowWindow(hwnd, SW_HIDE);
         }
     }
 }
@@ -268,6 +303,8 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: usize, lparam: isize) ->
                 if x < r.left || x >= r.right || y < r.top || y >= r.bottom {
                     emit(PlatformEvent::OutsideClick(raw));
                 }
+            } else {
+                log::warn!("flyout: can't read its window rect");
             }
         }
     }

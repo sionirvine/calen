@@ -62,6 +62,7 @@ pub enum Message {
     /// Flyout mini-month click: list that day's week (None = back to upcoming).
     FlyoutWeek(Option<NaiveDate>),
     FlyoutReady(window::Id, u64),
+    FlyoutFocus(window::Id, u32),
     Popup(crate::alert_popup::PopupMsg),
     Storage(crate::storage::StorageMsg),
     ScrollMorning,
@@ -207,9 +208,12 @@ impl App {
             let _ = crate::platform::set_autostart(true);
         }
         let upd = crate::updater::boot(&mut app);
-        // Dev aid: `--flyout` opens the tray flyout as if the tray icon was clicked.
+        // Dev aid: `--flyout` opens the tray flyout 4 s after start, as if the tray icon
+        // was clicked (the delay lets you move focus elsewhere first, like a real tray click).
         let flyout = if cfg!(debug_assertions) && std::env::args().any(|a| a == "--flyout") {
-            Task::done(Message::Platform(crate::platform::PlatformEvent::TrayClick { x: 100_000.0, y: 100_000.0, rect: None }))
+            Task::perform(tokio::time::sleep(std::time::Duration::from_secs(4)), |_| {
+                Message::Platform(crate::platform::PlatformEvent::TrayClick { x: 100_000.0, y: 100_000.0, rect: None })
+            })
         } else {
             Task::none()
         };
@@ -768,6 +772,7 @@ impl App {
             Message::FlyoutWeek(Some(d)) => crate::flyout::pick_week(self, d),
             Message::FlyoutWeek(None) => self.flyout.week = None,
             Message::FlyoutReady(id, raw) => return crate::flyout::ready(self, id, raw),
+            Message::FlyoutFocus(id, attempt) => return crate::flyout::focus(self, id, attempt),
             Message::Popup(m) => return crate::alert_popup::update(self, m),
             Message::WinDrag => {
                 if let Some(id) = self.main_window {

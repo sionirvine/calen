@@ -53,7 +53,8 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   Calen shows them as thumbnails. Click one to open a viewer: scroll to zoom, drag to
   pan, ←/→ to move between images.
 - **Auto-update** from GitHub Releases. Calen downloads and verifies the update in the
-  background, shows *Update ready*, and applies it on the next start.
+  background, then shows a small floating notice (*Calen X is ready · Restart to update*,
+  dismissible) and applies it on the next start.
 
 ## Keyboard
 

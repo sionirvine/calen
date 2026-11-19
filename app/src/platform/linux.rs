@@ -198,7 +198,10 @@ pub fn notify(n: &Notice) -> Result<(), String> {
 }
 
 // Focus loss closes the flyout on GNOME/KDE; there is no global click hook on Wayland.
-pub fn force_foreground(_raw: u64) {}
+pub fn try_focus(_raw: u64) -> bool {
+    true
+}
+pub fn fade_out(_raw: u64) {}
 pub fn watch_outside_clicks(_raw: u64) {}
 pub fn unwatch_outside_clicks() {}
 
