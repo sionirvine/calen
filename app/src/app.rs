@@ -37,6 +37,8 @@ pub enum Message {
     // grids
     Grid(GridMsg),
     AgendaClick(OccKey, NaiveDate),
+    /// The event right-click menu.
+    Context(crate::views::context::MenuMsg),
     // quick add
     OpenQuickAdd(Option<NaiveDate>),
     QuickInput(String),
@@ -153,6 +155,11 @@ pub struct App {
     pub grid_caches: crate::views::grid::GridCaches,
     /// The left pane's week list.
     pub side_pane: crate::views::sidebar::WeekPane,
+    /// Where the last right-button press was, in main-window coordinates.
+    pub context_at: std::cell::Cell<iced::Point>,
+    pub context_menu: Option<crate::views::context::ContextMenu>,
+    /// Current inner size of the main window.
+    pub main_size: iced::Size,
 }
 
 pub struct Flags {
@@ -211,10 +218,14 @@ impl App {
             storage: None,
             grid_caches: Default::default(),
             side_pane: Default::default(),
+            context_at: std::cell::Cell::new(iced::Point::ORIGIN),
+            context_menu: None,
+            main_size: iced::Size::new(1100.0, 720.0),
         };
         app.refresh_occurrences(true);
         let task = if flags.start_minimized { Task::none() } else { app.open_main() };
         let sync = crate::sync_hook::boot(&mut app);
+        crate::platform::set_clock_prefs(app.settings.time_24h, app.settings.date_format.month_first());
         crate::platform::init_tray(app.settings.dnd_active(chrono::Utc::now().timestamp()));
         if cfg!(debug_assertions) {
             // Dev builds never register themselves to start at login.
@@ -399,6 +410,7 @@ impl App {
     }
 
     pub fn save_settings(&self) {
+        crate::platform::set_clock_prefs(self.settings.time_24h, self.settings.date_format.month_first());
         if let Err(e) = self.store.set_setting(Settings::KEY, &self.settings) {
             log::error!("saving settings: {e}");
         }
@@ -641,7 +653,7 @@ impl App {
     }
 
     /// Scroll the left pane so the picked day is its first line.
-    fn scroll_side(&mut self, settle: std::time::Duration) -> Task<Message> {
+    pub fn scroll_side(&mut self, settle: std::time::Duration) -> Task<Message> {
         let week = start_of_week(self.anchor, self.settings.week_start_day());
         self.side_pane.scroll_to(Pane::Main, Some(week), self.anchor, settle)
     }
@@ -676,6 +688,7 @@ impl App {
                 return Task::batch([self.scroll_to_morning(), self.scroll_side(crate::views::sidebar::SETTLE)]);
             }
             Message::SetView(v) => {
+                self.context_menu = None;
                 self.view = v;
                 self.settings.view = v;
                 self.save_settings();
@@ -699,6 +712,17 @@ impl App {
                 self.reload();
             }
             Message::Grid(g) => return self.on_grid(g),
+            Message::Context(m) => {
+                let Some(menu) = self.context_menu.take() else { return Task::none() };
+                match m {
+                    crate::views::context::MenuMsg::Edit => return self.open_editor_for(&menu.key),
+                    crate::views::context::MenuMsg::Delete => {
+                        self.selected = Some(menu.key);
+                        return self.update(Message::DeleteSelected);
+                    }
+                    crate::views::context::MenuMsg::Close => {}
+                }
+            }
             Message::AgendaClick(key, date) => {
                 self.jump_to(date);
                 self.selected = Some(key);
@@ -783,7 +807,8 @@ impl App {
             }
             Message::CloseOverlay => {
                 // Close the top-most overlay; with none open, clear the selection.
-                let closed = std::mem::take(&mut self.show_shortcuts)
+                let closed = self.context_menu.take().is_some()
+                    || std::mem::take(&mut self.show_shortcuts)
                     || self.storage.take().is_some()
                     || self.sync.dialog.take().is_some()
                     || self.scope_prompt.take().is_some()
@@ -822,7 +847,10 @@ impl App {
                 let close = crate::flyout::close(self);
                 return Task::batch([close, self.open_main()]);
             }
-            Message::Palette(m) => return crate::palette::update(self, m),
+            Message::Palette(m) => {
+                self.context_menu = None;
+                return crate::palette::update(self, m);
+            }
             Message::Sync(m) => return crate::sync_hook::update(self, m),
             Message::Platform(e) => return self.on_platform(e),
             Message::Update(m) => return crate::updater::update(self, m),
@@ -870,6 +898,15 @@ impl App {
             Message::MaximizedChanged(m) => self.main_maximized = m,
             Message::Demo(what) => match what.as_str() {
                 "palette" => return crate::palette::open(self, ">"),
+                "restart" => return crate::palette::run(self, crate::palette::Command::Restart),
+                // With `--flyout`: fade the flyout out, then open it again.
+                "flyout-cycle" => {
+                    let close = crate::flyout::close(self);
+                    let reopen = Task::perform(tokio::time::sleep(std::time::Duration::from_secs(1)), |_| {
+                        Message::Platform(crate::platform::PlatformEvent::TrayClick { x: 100_000.0, y: 100_000.0, rect: None })
+                    });
+                    return Task::batch([close, reopen]);
+                }
                 "bench" => return crate::bench::start_bench(self),
                 w if w.starts_with("shot:") => return crate::bench::shot(self, &w["shot:".len()..]),
                 "editor" => {
@@ -891,6 +928,16 @@ impl App {
                     }
                     if let Some(n) = offset("pick:") {
                         return self.on_grid(GridMsg::SelectDate(today + Duration::days(n)));
+                    }
+                    // `context:N`: the right-click menu of the Nth visible event, at a fixed point.
+                    if let Some(n) = offset("context:") {
+                        let (first, last) = (self.visible_days()[0], *self.visible_days().last().unwrap());
+                        let key =
+                            self.occs.iter().filter(|o| o.start.date_naive() >= first && o.start.date_naive() <= last).nth(n as usize);
+                        if let Some(k) = key.map(|o| o.key.clone()) {
+                            self.context_at.set(iced::Point::new(640.0, 300.0));
+                            return self.on_grid(GridMsg::Context(k));
+                        }
                     }
                 }
             },
@@ -960,6 +1007,8 @@ impl App {
                 self.main_geometry.1 = Some(p);
             }
             window::Event::Resized(size) if Some(id) == self.main_window => {
+                self.main_size = size;
+                self.context_menu = None;
                 if !self.main_maximized {
                     self.main_geometry.0 = Some(size);
                 }
@@ -974,6 +1023,15 @@ impl App {
         match g {
             GridMsg::Select(k) => self.selected = k,
             GridMsg::Open(k) => return self.open_editor_for(&k),
+            GridMsg::Context(k) => {
+                // The flyout lists events too, but the menu lives in the main window.
+                if crate::flyout::is_open(self) || self.overlay_open() {
+                    return Task::none();
+                }
+                let read_only = self.occ(&k).is_none_or(|o| o.read_only);
+                self.selected = Some(k.clone());
+                self.context_menu = Some(crate::views::context::ContextMenu { key: k, at: self.context_at.get(), read_only });
+            }
             GridMsg::SelectDate(d) => {
                 self.jump_to(d);
                 return self.scroll_side(crate::views::sidebar::SETTLE);

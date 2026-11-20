@@ -24,6 +24,8 @@ pub enum GridMsg {
         all_day: bool,
     },
     SelectDate(NaiveDate),
+    /// Right-click (or two-finger tap) on an event: open its menu.
+    Context(OccKey),
     /// Double-click on a day (month view): start quick add on that day.
     NewOn(NaiveDate),
 }

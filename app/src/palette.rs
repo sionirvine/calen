@@ -35,6 +35,7 @@ pub enum Command {
     RespectSystemDnd(bool),
     Clock24(bool),
     WeekStart(u8),
+    DateFormat(crate::datefmt::DateFormat),
     DefaultAlert(Option<i64>),
     DefaultDuration(i64),
     DateOrder(DateOrder),
@@ -52,6 +53,7 @@ pub enum Command {
     View(ViewKind),
     ToggleSidebar,
     Shortcuts,
+    Restart,
     Quit,
 }
 
@@ -164,6 +166,7 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
             format!("Currently {}", on_off(s.auto_update)),
         ),
         (Command::Shortcuts, "Keyboard shortcuts".into(), String::new()),
+        (Command::Restart, "Restart Calen".into(), String::new()),
         (Command::Quit, "Quit Calen".into(), String::new()),
     ];
     if crate::platform::notification_settings_url().is_some() {
@@ -172,6 +175,10 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
     }
     if s.image_host != crate::settings::ImageHost::Off {
         v.push((Command::ImageUploadsOff, "Image storage: turn uploads off".into(), String::new()));
+    }
+    let today = Local::now().date_naive();
+    for f in crate::datefmt::DateFormat::ALL {
+        v.push((Command::DateFormat(f), format!("Date format: {} ({})", f.pattern(), f.format(today)), current(s.date_format == f)));
     }
     for m in [None, Some(0), Some(5), Some(10), Some(15), Some(30), Some(60)] {
         let label = match m {
@@ -370,7 +377,12 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
         }
         Command::RespectSystemDnd(b) => s.respect_system_dnd = b,
         Command::Clock24(b) => s.time_24h = b,
-        Command::WeekStart(d) => s.week_start = d,
+        Command::WeekStart(d) => {
+            s.week_start = d;
+            app.save_settings();
+            return app.scroll_side(crate::views::sidebar::SETTLE);
+        }
+        Command::DateFormat(f) => s.date_format = f,
         Command::DefaultAlert(m) => s.default_alert = m,
         Command::DefaultDuration(m) => s.default_duration = m,
         Command::DateOrder(o) => s.date_order = o,
@@ -405,6 +417,14 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
         Command::ToggleSidebar => task = Task::done(Message::ToggleSidebar),
         Command::Shortcuts => {
             app.show_shortcuts = true;
+        }
+        Command::Restart => {
+            log::info!("restarting on request");
+            if crate::updater::relaunch(&app.data_dir) {
+                return iced::exit();
+            }
+            app.flash("Couldn't restart Calen");
+            return Task::none();
         }
         Command::Quit => task = iced::exit(),
     }

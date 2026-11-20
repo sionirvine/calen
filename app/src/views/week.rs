@@ -339,6 +339,10 @@ impl<'a> Program<GridMsg> for WeekGrid<'a> {
     fn update(&self, state: &mut State, event: &Event, bounds: Rectangle, cursor: Cursor) -> Option<canvas::Action<GridMsg>> {
         let pos = cursor.position_in(bounds);
         match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) if state.drag.is_none() => {
+                let b = self.hit(&self.layout(&bounds), pos?)?;
+                Some(canvas::Action::publish(GridMsg::Context(self.occs[b.idx].key.clone())).and_capture())
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let p = pos?;
                 if p.x < GUTTER {
@@ -492,6 +496,7 @@ pub struct AllDayHeader<'a> {
     pub today: NaiveDate,
     /// The picked day (red ring); today keeps its blue circle.
     pub active: NaiveDate,
+    pub date_format: crate::datefmt::DateFormat,
     pub cache: &'a canvas::Cache,
 }
 
@@ -533,7 +538,16 @@ impl<'a> AllDayHeader<'a> {
         let cw = self.col_w(&bounds);
         grid::rect(frame, Rectangle::new(Point::ORIGIN, bounds.size()), p.bg);
 
-        for (d, day) in self.days.iter().enumerate() {
+        // Day view: one full date instead of the weekday and number.
+        let single = self.days.len() == 1;
+        if single {
+            let day = self.days[0];
+            let color = if day == self.today { p.today } else { p.text };
+            let label = crate::datefmt::long_with_weekday(day, self.date_format);
+            grid::text(frame, &label, Point::new(GUTTER + 8.0, 13.0), 20.0, color, BOLD, bounds.width - GUTTER - 16.0);
+            grid::vline(frame, GUTTER, HEADER_H - 4.0, bounds.height, p.grid);
+        }
+        for (d, day) in self.days.iter().enumerate().filter(|_| !single) {
             let x = GUTTER + d as f32 * cw;
             let is_today = *day == self.today;
             let picked = *day == self.active && self.days.len() > 1;
@@ -595,6 +609,11 @@ impl<'a> Program<GridMsg> for AllDayHeader<'a> {
 
     fn update(&self, state: &mut HeaderState, event: &Event, bounds: Rectangle, cursor: Cursor) -> Option<canvas::Action<GridMsg>> {
         match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) if state.drag.is_none() => {
+                let p = cursor.position_in(bounds)?;
+                let (i, _) = self.bars(&bounds).into_iter().find(|(_, r)| r.contains(p))?;
+                Some(canvas::Action::publish(GridMsg::Context(self.occs[i].key.clone())).and_capture())
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let p = cursor.position_in(bounds)?;
                 if p.x < GUTTER {

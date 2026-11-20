@@ -317,14 +317,7 @@ pub fn apply_staged(data_dir: &Path) -> bool {
     match result {
         Ok(()) => {
             log::info!("updated to {}", st.version);
-            let args: Vec<String> = std::env::args().skip(1).collect();
-            match std::process::Command::new(&target).args(args).spawn() {
-                Ok(_) => true,
-                Err(e) => {
-                    log::error!("relaunch failed: {e}");
-                    false
-                }
-            }
+            spawn_again(&target)
         }
         Err(e) => {
             log::error!("applying update failed: {e}");
@@ -376,6 +369,45 @@ pub fn badge<'a>(app: &'a App, p: Palette) -> Element<'a, Message> {
             .into(),
         _ => Space::new().into(),
     }
+}
+
+/// Start a new copy of `exe` with this process's arguments.
+fn spawn_again(exe: &Path) -> bool {
+    // Same arguments, minus the dev-only `--demo <what>` (it would run again).
+    let mut args: Vec<String> = Vec::new();
+    let mut it = std::env::args().skip(1);
+    while let Some(a) = it.next() {
+        if a == "--demo" {
+            it.next();
+        } else {
+            args.push(a);
+        }
+    }
+    // In a Flatpak the sandbox ends with this process, so ask the portal to
+    // start the new copy in a sandbox of its own.
+    let mut cmd = if crate::platform::sandboxed() {
+        let mut c = std::process::Command::new("flatpak-spawn");
+        c.arg(exe);
+        c
+    } else {
+        std::process::Command::new(exe)
+    };
+    match cmd.args(args).spawn() {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!("relaunch failed: {e}");
+            false
+        }
+    }
+}
+
+/// Start Calen again (the caller exits). The instance port is dropped first so
+/// the new process doesn't hand over to this one.
+pub fn relaunch(data_dir: &Path) -> bool {
+    let exe = if cfg!(target_os = "linux") { std::env::var_os("APPIMAGE").map(PathBuf::from) } else { None };
+    let Some(exe) = exe.or_else(|| std::env::current_exe().ok()) else { return false };
+    let _ = std::fs::remove_file(data_dir.join("instance.port"));
+    spawn_again(&exe)
 }
 
 #[cfg(test)]

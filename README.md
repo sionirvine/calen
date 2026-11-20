@@ -27,22 +27,26 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   window on Windows). Click a day to list its week with that day at the top, *Upcoming* or
   the date for the next two weeks, and anywhere outside to close it. Right-click
   opens a menu (Open, New Event, Do Not Disturb, Sync Now, Quit). The tray icon shows
-  today's date. Only one copy runs at a time; launching it again brings the window back.
+  today's date, and on Windows its tooltip shows the full date and a ticking clock. Only
+  one copy runs at a time; launching it again brings the window back.
 - **Own title bar.** No system title bar: minimize / maximize / close sit in the toolbar,
   and dragging (or double-clicking) the toolbar moves (or maximizes) the window.
 - **This week in the sidebar.** The main window's sidebar lists the week of the chosen
   day. Click a date (in the week header, the mini-month or the month grid) to pick it: it
-  turns red and moves to the top of the list, while today stays blue.
+  turns red and moves to the top of the list, while today stays blue. Day headings read
+  like *TODAY 20 NOV*; `> Date format` offers 15 styles (`DD/MM/YYYY`, `MM/DD/YY`,
+  `YYYY-MM-DD`, `MMMM D, YYYY`…), and `> Week starts on` picks Monday, Sunday or Saturday.
 - **Day / Week / Month views.** Drag events to move them, drag the bottom edge to change
   the length, drag on empty space to create an event, and double-click to open one.
-  Multi-day and all-day bars can be dragged across days. For a repeating event you choose
-  "this event / all events". Ctrl+Z undoes.
+  Multi-day and all-day bars can be dragged across days. Right-click an event (or tap
+  with two fingers on a touchpad) for Edit / Delete. For a repeating event you choose
+  "this event / all events". Ctrl+Z undoes. The Day view's header shows the full date.
 - **Keyboard-first quick add.** Press `N` and type something like
   `Lunch with Sam tomorrow 12:30-13:30 at Café Luna /work !15m`. A live preview shows
   the date, time, place, calendar and alert. Enter adds it; Tab opens the full editor.
 - **Command palette.** `Ctrl+P`, `Ctrl+F` or `/` does a fuzzy search over all events.
   Start with `>` for commands and settings (theme, Do Not Disturb, start at login,
-  default alert, accounts, image storage, updates, and more).
+  default alert, accounts, image storage, updates, `> Restart`, and more).
 - **Notifications** with Join / Snooze actions. They are held back while Calen's
   Do Not Disturb is on, during Windows full-screen games, presentation mode or quiet
   hours, and when GNOME/KDE Do Not Disturb or Feral GameMode is active. Windows Focus
@@ -119,7 +123,9 @@ To try it without touching your real data, set `CALEN_DATA_DIR` to a scratch fol
 The screenshots above come from a scratch folder with `--seed` (no real accounts). In debug
 builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo palette|editor`
 opens the palette or an event with photos (`--demo pick:+3`, `month-pick:-5` or
-`flyout-pick:+6` picks a date); `scripts/shot.ps1` saves a Calen window to PNG.
+`flyout-pick:+6` picks a date, `context:2` opens an event's right-click menu,
+`flyout-cycle` fades the flyout out and back, `restart` restarts); `scripts/shot.ps1`
+saves a Calen window to PNG.
 
 For rendering work there are three more aids. They're also available in debug builds or with `CALEN_DEV=1`:
 - `--demo shot:week:/tmp/w.png` shows that view (`day`, `week` or `month`), saves the

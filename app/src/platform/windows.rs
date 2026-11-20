@@ -1,7 +1,7 @@
 //! Windows: tray-icon, WinRT toasts, Focus Assist / full-screen detection.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
@@ -15,9 +15,9 @@ use windows_sys::Win32::UI::Shell::{
     SetCurrentProcessExplicitAppUserModelID,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AW_BLEND, AW_HIDE, AnimateWindow, BringWindowToTop, CallNextHookEx, GetClassNameW, GetForegroundWindow, GetWindowRect,
-    GetWindowThreadProcessId, HHOOK, IsWindowVisible, MSLLHOOKSTRUCT, SPI_GETWORKAREA, SW_HIDE, SetForegroundWindow, SetWindowsHookExW,
-    ShowWindow, SystemParametersInfoW, UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN,
+    BringWindowToTop, CallNextHookEx, GetClassNameW, GetForegroundWindow, GetWindowRect, GetWindowThreadProcessId, HHOOK, IsWindowVisible,
+    MSLLHOOKSTRUCT, SPI_GETWORKAREA, SW_HIDE, SetForegroundWindow, SetTimer, SetWindowsHookExW, ShowWindow, SystemParametersInfoW,
+    UnhookWindowsHookEx, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_RBUTTONDOWN,
 };
 
 use super::{APP_ID, MenuAction, Notice, NotificationAction, PlatformEvent, emit, icon};
@@ -28,6 +28,41 @@ struct Tray {
     day: u32,
     dnd: bool,
     problem: bool,
+    tip: String,
+}
+
+static CLOCK_24H: AtomicBool = AtomicBool::new(true);
+static MONTH_FIRST: AtomicBool = AtomicBool::new(false);
+
+/// How the tooltip writes the time and date.
+pub fn set_clock_prefs(time_24h: bool, month_first: bool) {
+    CLOCK_24H.store(time_24h, Ordering::Relaxed);
+    MONTH_FIRST.store(month_first, Ordering::Relaxed);
+}
+
+/// "20 November 2026 / 14:06:00 / (blank) / Calen v0.1.8".
+fn tooltip(dnd: bool) -> String {
+    let now = chrono::Local::now();
+    let fmt = if MONTH_FIRST.load(Ordering::Relaxed) { crate::datefmt::DateFormat::MmDd } else { crate::datefmt::DateFormat::DdMm };
+    let date = crate::datefmt::long(now.date_naive(), fmt);
+    let time = if CLOCK_24H.load(Ordering::Relaxed) { now.format("%H:%M:%S") } else { now.format("%-I:%M:%S %p") };
+    format!("{date}\n{time}\n\n{}", super::tray_tooltip(dnd))
+}
+
+/// Refresh the tooltip's clock. Runs once a second from a thread timer on the
+/// event-loop thread, so it never wakes iced or redraws a window.
+unsafe extern "system" fn clock_tick(_: windows_sys::Win32::Foundation::HWND, _: u32, _: usize, _: u32) {
+    TRAY.with(|t| {
+        if let Ok(mut t) = t.try_borrow_mut()
+            && let Some(t) = t.as_mut()
+        {
+            let tip = tooltip(t.dnd);
+            if tip != t.tip {
+                let _ = t.icon.set_tooltip(Some(&tip));
+                t.tip = tip;
+            }
+        }
+    });
 }
 
 thread_local! {
@@ -140,7 +175,7 @@ pub fn init_tray(dnd: bool) -> bool {
     }));
 
     let built = TrayIconBuilder::new()
-        .with_tooltip(super::tray_tooltip(dnd))
+        .with_tooltip(tooltip(dnd))
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .with_icon(match tray_icon(dnd, false) {
@@ -151,8 +186,11 @@ pub fn init_tray(dnd: bool) -> bool {
     match built {
         Ok(icon) => {
             TRAY.with(|t| {
-                *t.borrow_mut() = Some(Tray { icon, dnd_item, day: today(), dnd, problem: false });
+                *t.borrow_mut() = Some(Tray { icon, dnd_item, day: today(), dnd, problem: false, tip: String::new() });
             });
+            unsafe {
+                SetTimer(std::ptr::null_mut(), 0, 1000, Some(clock_tick));
+            }
             true
         }
         Err(e) => {
@@ -179,7 +217,11 @@ pub fn update_tray(dnd: bool, problem: bool) {
             if t.dnd_item.is_checked() != dnd {
                 t.dnd_item.set_checked(dnd);
             }
-            let _ = t.icon.set_tooltip(Some(super::tray_tooltip(dnd)));
+            let tip = tooltip(dnd);
+            if tip != t.tip {
+                let _ = t.icon.set_tooltip(Some(&tip));
+                t.tip = tip;
+            }
         }
     });
 }
@@ -284,11 +326,40 @@ pub fn trim_memory() {
     log::debug!("trimmed working set");
 }
 
-/// Fade a window out (DWM blend, ~120 ms) instead of letting it vanish abruptly.
+/// Fade a window out (~120 ms) instead of letting it vanish abruptly.
+///
+/// `AnimateWindow(AW_BLEND)` can't be used: it snapshots the window with
+/// `WM_PRINT`, which iced never draws for, so an unthemed blank window faded
+/// out. Instead the window becomes layered for the fade, and its alpha steps
+/// down over the frame already on screen. The old style comes back once it's
+/// hidden, so winit's idea of the window stays right. GPU swapchains (flip
+/// model) don't draw in layered windows, so there the window just hides.
 pub fn fade_out(raw: u64) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GWL_EXSTYLE, GetWindowLongPtrW, LWA_ALPHA, SetLayeredWindowAttributes, SetWindowLongPtrW, WS_EX_LAYERED,
+    };
     let hwnd = raw as usize as *mut core::ffi::c_void;
     unsafe {
-        if IsWindowVisible(hwnd) != 0 && AnimateWindow(hwnd, 120, AW_HIDE | AW_BLEND) == 0 {
+        if IsWindowVisible(hwnd) == 0 {
+            return;
+        }
+        let cpu = std::env::var("ICED_BACKEND").is_ok_and(|b| b.starts_with("tiny-skia"));
+        if cpu {
+            let old = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            if old & WS_EX_LAYERED as isize == 0 {
+                SetWindowLongPtrW(hwnd, GWL_EXSTYLE, old | WS_EX_LAYERED as isize);
+            }
+            if SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA) != 0 {
+                const STEPS: u32 = 8;
+                for i in 1..=STEPS {
+                    SetLayeredWindowAttributes(hwnd, 0, (255 * (STEPS - i) / STEPS) as u8, LWA_ALPHA);
+                    std::thread::sleep(std::time::Duration::from_millis(15));
+                }
+            }
+            ShowWindow(hwnd, SW_HIDE);
+            SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, old);
+        } else {
             ShowWindow(hwnd, SW_HIDE);
         }
     }

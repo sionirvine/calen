@@ -1,3 +1,4 @@
+pub mod context;
 pub mod editor;
 pub mod grid;
 pub mod month;
@@ -30,12 +31,11 @@ pub fn view(app: &App, id: window::Id) -> Element<'_, Message> {
 }
 
 fn toolbar(app: &App, p: Palette) -> Element<'_, Message> {
+    // The Day view's header carries the full date, and the left pane's
+    // mini-month names the month, so the title only shows when it's needed.
     let title: Element<'_, Message> = match app.view {
-        ViewKind::Day => row![
-            text(app.anchor.format("%A, %-d %B").to_string()).size(20).font(BOLD),
-            text(format!(" {}", app.anchor.year())).size(20).font(BOLD).color(p.accent)
-        ]
-        .into(),
+        ViewKind::Day => Space::new().into(),
+        _ if app.settings.sidebar_visible => Space::new().into(),
         ViewKind::Week => {
             let s = start_of_week(app.anchor, app.settings.week_start_day());
             let e = s + chrono::Duration::days(6);
@@ -180,6 +180,7 @@ fn grid_key(app: &App, p: Palette, occs: &[&Occ], days: &[chrono::NaiveDate]) ->
     app.anchor.hash(&mut h);
     app.now.date_naive().hash(&mut h);
     app.settings.time_24h.hash(&mut h);
+    app.settings.date_format.hash(&mut h);
     std::mem::discriminant(&app.view).hash(&mut h);
     format!("{p:?}").hash(&mut h);
     h.finish()
@@ -217,6 +218,7 @@ fn content(app: &App, p: Palette) -> Element<'_, Message> {
                 selected: app.selected.as_ref(),
                 today: app.now.date_naive(),
                 active: app.anchor,
+                date_format: app.settings.date_format,
             };
             let grid = week::WeekGrid {
                 cache: app.grid_caches.week.with_key(grid_key(app, p, &timed, &days)),
@@ -248,6 +250,9 @@ fn main_window(app: &App) -> Element<'_, Message> {
     let mut layers = vec![base];
     if !app.main_maximized {
         layers.push(resize_edges());
+    }
+    if let Some(el) = context::view(app, p) {
+        layers.push(el);
     }
     if let Some(q) = &app.quick {
         layers.push(modal(quick_add(app, q, p), Message::CloseOverlay, false));
@@ -293,7 +298,7 @@ fn main_window(app: &App) -> Element<'_, Message> {
             .into(),
         );
     }
-    stack(layers).into()
+    context::tracker(stack(layers), &app.context_at)
 }
 
 /// Dim backdrop + content. `centered` = middle of the window, else near the top.

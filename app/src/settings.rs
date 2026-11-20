@@ -89,6 +89,8 @@ pub struct Settings {
     pub week_start: u8,
     pub time_24h: bool,
     pub date_order: DateOrder,
+    /// Day headings in the left pane and tray flyout.
+    pub date_format: crate::datefmt::DateFormat,
     pub default_duration: i64,
     pub default_alert: Option<i64>,
     pub default_calendar: Option<String>,
@@ -120,6 +122,7 @@ impl Default for Settings {
             week_start: 0,
             time_24h: true,
             date_order: DateOrder::DayMonth,
+            date_format: crate::datefmt::DateFormat::DdMmm,
             default_duration: 60,
             default_alert: Some(10),
             default_calendar: None,
