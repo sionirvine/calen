@@ -58,6 +58,7 @@ icon!(
     r#"<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>"#
 );
 icon!(close, r#"<path d="M18 6L6 18M6 6l12 12"/>"#);
+icon!(pencil, r#"<path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>"#);
 icon!(trash, r#"<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>"#);
 icon!(calendar, r#"<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>"#);
 icon!(download, r#"<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/>"#);

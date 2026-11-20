@@ -131,8 +131,8 @@ pub fn mini_month<'a>(app: &'a App, p: Palette, target: MiniTarget) -> Element<'
     column![header, grid].spacing(8).into()
 }
 
-fn day_label(d: NaiveDate, today: NaiveDate) -> (String, bool) {
-    let date = d.format("%-d/%-m/%Y").to_string();
+fn day_label(d: NaiveDate, today: NaiveDate, f: crate::datefmt::DateFormat) -> (String, bool) {
+    let date = f.format(d).to_uppercase();
     if d == today {
         (format!("TODAY  {date}"), true)
     } else if d == today + Duration::days(1) {
@@ -186,7 +186,7 @@ pub fn agenda<'a>(
             continue;
         }
         any = true;
-        let (label, is_today) = day_label(d, today);
+        let (label, is_today) = day_label(d, today, app.settings.date_format);
         let color = if is_today {
             p.today
         } else if picked {
@@ -233,6 +233,7 @@ fn agenda_item<'a>(app: &'a App, p: Palette, o: &'a Occ, day: NaiveDate, h24: bo
         return mouse_area(container(chip).padding([3, 0]))
             .on_press(Message::AgendaClick(o.key.clone(), day))
             .on_double_click(Message::Grid(crate::views::grid::GridMsg::Open(o.key.clone())))
+            .on_right_press(Message::Grid(crate::views::grid::GridMsg::Context(o.key.clone())))
             .interaction(iced::mouse::Interaction::Pointer)
             .into();
     }
@@ -282,6 +283,7 @@ fn agenda_item<'a>(app: &'a App, p: Palette, o: &'a Occ, day: NaiveDate, h24: bo
     }))
     .on_press(Message::AgendaClick(o.key.clone(), day))
     .on_double_click(Message::Grid(crate::views::grid::GridMsg::Open(o.key.clone())))
+    .on_right_press(Message::Grid(crate::views::grid::GridMsg::Context(o.key.clone())))
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
 }

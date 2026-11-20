@@ -145,6 +145,14 @@ pub fn left_background() {
     os::hide_running_notice();
 }
 
+/// How the Windows tray tooltip's clock writes the time and date.
+pub fn set_clock_prefs(time_24h: bool, month_first: bool) {
+    #[cfg(windows)]
+    os::set_clock_prefs(time_24h, month_first);
+    #[cfg(not(windows))]
+    let _ = (time_24h, month_first);
+}
+
 /// Refresh tray icon (date number / DND badge) and menu state.
 pub fn update_tray(dnd: bool, problem: bool) {
     if tray_available() {
@@ -158,8 +166,7 @@ pub fn update_tray(dnd: bool, problem: bool) {
 /// "Calen is running" notification would only repeat that.
 #[cfg(target_os = "linux")]
 fn shows_background_apps() -> bool {
-    sandboxed()
-        && std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")))
+    sandboxed() && std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|d| d.split(':').any(|d| d.eq_ignore_ascii_case("GNOME")))
 }
 
 /// The line shown under Calen in GNOME's Background Apps (Flatpak only).

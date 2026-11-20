@@ -62,6 +62,7 @@ pub fn tick(app: &mut App) -> Task<Message> {
         app.save_settings();
         report_missed(app);
     }
+    platform::set_clock_prefs(app.settings.time_24h, app.settings.date_format.month_first());
     platform::update_tray(dnd, matches!(app.sync.status, crate::sync_hook::Status::Error(_)));
 
     // Day rollover: make sure today's occurrences are loaded.

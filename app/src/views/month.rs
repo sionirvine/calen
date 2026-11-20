@@ -282,6 +282,11 @@ impl<'a> Program<GridMsg> for MonthGrid<'a> {
 
     fn update(&self, state: &mut State, event: &Event, bounds: Rectangle, cursor: Cursor) -> Option<canvas::Action<GridMsg>> {
         match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) if state.drag.is_none() => {
+                let p = cursor.position_in(bounds)?;
+                let i = self.hit(&self.items(&bounds), p)?;
+                Some(canvas::Action::publish(GridMsg::Context(self.occs[i].key.clone())).and_capture())
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 let p = cursor.position_in(bounds)?;
                 if p.y < HEAD_H {

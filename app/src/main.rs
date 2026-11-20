@@ -3,6 +3,7 @@
 mod alert_popup;
 mod app;
 mod bench;
+mod datefmt;
 mod edit;
 mod flyout;
 mod icons;
@@ -123,11 +124,7 @@ fn main() -> iced::Result {
     }
 
     let flags = std::sync::Mutex::new(Some(Flags { start_minimized, data_dir }));
-    iced::daemon(
-        move || App::boot(flags.lock().unwrap().take().expect("boot once")),
-        update,
-        view,
-    )
+    iced::daemon(move || App::boot(flags.lock().unwrap().take().expect("boot once")), update, view)
         .title(App::title)
         .theme(App::theme)
         .subscription(App::subscription)
