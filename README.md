@@ -124,7 +124,8 @@ The screenshots above come from a scratch folder with `--seed` (no real accounts
 builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo palette|editor`
 opens the palette or an event with photos (`--demo pick:+3`, `month-pick:-5` or
 `flyout-pick:+6` picks a date, `context:2` opens an event's right-click menu,
-`flyout-cycle` fades the flyout out and back, `restart` restarts); `scripts/shot.ps1`
+`flyout-cycle` fades the flyout out and back, `restart` restarts, `editor-scroll` and
+`editor-wide` check the editor's notes and thumbnails); `scripts/shot.ps1`
 saves a Calen window to PNG.
 
 For rendering work there are three more aids. They're also available in debug builds or with `CALEN_DEV=1`:

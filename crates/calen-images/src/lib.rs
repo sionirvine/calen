@@ -270,12 +270,39 @@ pub async fn thumbnail(url: &str, cache_dir: &Path) -> Result<Rgba, ImageError> 
     let thumb = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, ImageError> { Ok(shrink(decode(&bytes)?)) })
         .await
         .map_err(|e| ImageError::Decode(e.to_string()))??;
+    store_thumbnail(&path, &thumb, cache_dir).await;
+    Ok(to_rgba(thumb))
+}
+
+/// `url`'s thumbnail made from a local copy of the image (the file just
+/// uploaded there), cached so it shows without a download.
+pub async fn thumbnail_from_file(url: &str, file: PathBuf, cache_dir: &Path) -> Result<Rgba, ImageError> {
+    let thumb =
+        tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, ImageError> { Ok(shrink(decode(&std::fs::read(&file)?)?)) })
+            .await
+            .map_err(|e| ImageError::Decode(e.to_string()))??;
+    store_thumbnail(&thumbnail_path(url, cache_dir), &thumb, cache_dir).await;
+    Ok(to_rgba(thumb))
+}
+
+/// `url`'s thumbnail made from pixels already decoded (the viewer's full image).
+pub async fn thumbnail_from_rgba(url: &str, full: Rgba, cache_dir: &Path) -> Result<Rgba, ImageError> {
+    let thumb = tokio::task::spawn_blocking(move || -> Result<image::DynamicImage, ImageError> {
+        let img = image::RgbaImage::from_raw(full.width, full.height, full.pixels).ok_or(ImageError::Decode("bad pixel buffer".into()))?;
+        Ok(shrink(image::DynamicImage::ImageRgba8(img)))
+    })
+    .await
+    .map_err(|e| ImageError::Decode(e.to_string()))??;
+    store_thumbnail(&thumbnail_path(url, cache_dir), &thumb, cache_dir).await;
+    Ok(to_rgba(thumb))
+}
+
+async fn store_thumbnail(path: &Path, thumb: &image::DynamicImage, cache_dir: &Path) {
     let _ = tokio::fs::create_dir_all(cache_dir).await;
     let mut png = Vec::new();
     if thumb.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).is_ok() {
-        let _ = tokio::fs::write(&path, &png).await;
+        let _ = tokio::fs::write(path, &png).await;
     }
-    Ok(to_rgba(thumb))
 }
 
 /// Full-size image for the viewer (downscaled to at most 4096 px).
@@ -303,6 +330,23 @@ pub async fn local_thumbnail(path: PathBuf) -> Result<Rgba, ImageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thumbnail_from_local_file_is_cached() {
+        let dir = std::env::temp_dir().join(format!("calen-thumb-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("photo.png");
+        image::RgbaImage::from_pixel(600, 300, image::Rgba([200, 80, 40, 255])).save(&file).unwrap();
+        // Nothing listens here, so a download would fail: the cache must answer.
+        let url = "http://127.0.0.1:9/photo.png";
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let made = rt.block_on(thumbnail_from_file(url, file, &dir.join("thumbs"))).unwrap();
+        assert_eq!((made.width, made.height), (THUMB_SIZE, THUMB_SIZE / 2));
+        let again = rt.block_on(thumbnail(url, &dir.join("thumbs"))).unwrap();
+        assert_eq!((again.width, again.height), (made.width, made.height));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parses_post_shapes() {

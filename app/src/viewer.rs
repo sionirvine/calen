@@ -68,7 +68,11 @@ pub fn update(app: &mut App, m: ViewerMsg) -> Task<Message> {
             {
                 v.loading = false;
                 match r {
-                    Ok(img) => v.handle = Some(Handle::from_rgba(img.width, img.height, img.pixels)),
+                    Ok(img) => {
+                        let url = v.urls[v.index].clone();
+                        v.handle = Some(Handle::from_rgba(img.width, img.height, img.pixels.clone()));
+                        return crate::image_tasks::thumb_from_full(app, url, img);
+                    }
                     Err(e) => v.error = Some(e),
                 }
             }
