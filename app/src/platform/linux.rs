@@ -121,7 +121,7 @@ fn install_desktop_entry() -> std::io::Result<()> {
     }
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Calen\nGenericName=Calendar\nComment=A fast calendar that lives in your tray\n\
-         Exec={}\nIcon={id}\nTerminal=false\nCategories=Office;Calendar;\nStartupWMClass={id}\n",
+         Exec={} %U\nIcon={id}\nTerminal=false\nCategories=Office;Calendar;\nStartupWMClass={id}\nMimeType=text/calendar;\n",
         desktop_quote(&exe.to_string_lossy())
     );
     write_if_changed(&data.join(format!("applications/{id}.desktop")), entry.as_bytes())

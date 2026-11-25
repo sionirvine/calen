@@ -47,6 +47,8 @@ pub enum PlatformEvent {
     Menu(MenuAction),
     /// Another launch of the app asked us to show ourselves.
     SecondInstance,
+    /// Calendar files to import (from the command line or another launch).
+    OpenFiles(Vec<std::path::PathBuf>),
     /// A notification button/body was activated.
     Notification(NotificationAction),
     /// The OS refused to show a notification; show it in-app instead.

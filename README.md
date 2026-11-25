@@ -59,6 +59,10 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   pushed with ETags and pulled incrementally using `sync-collection`. If the same event
   was changed elsewhere, your version is kept as a copy. The toolbar pill shows syncing,
   synced, offline with pending changes, or an error.
+- **Import `.ics` files.** Open an invite or calendar export with Calen (it registers for
+  `text/calendar`), drop it on the window, or use `> Import .ics file…`. A dialog lists
+  the events and the calendar they go to. An invite that's already in Calen updates it,
+  and Ctrl+Z undoes the import. `calen invite.ics` hands the file to a running Calen.
 - **Meeting links.** Zoom, Google Meet and Teams links get a **Join** button.
 - **Map links.** A Google Maps link becomes a clickable place name. Calen saves it as
   standard `LOCATION` + `GEO` + `X-APPLE-STRUCTURED-LOCATION`, so iOS/macOS Calendar

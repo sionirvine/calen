@@ -28,6 +28,9 @@
     </p>
   </description>
   <launchable type="desktop-id">com.felixadr.Calen.desktop</launchable>
+  <provides>
+    <mediatype>text/calendar</mediatype>
+  </provides>
   <url type="homepage">https://github.com/sionirvine/calen</url>
   <url type="bugtracker">https://github.com/sionirvine/calen/issues</url>
   <url type="vcs-browser">https://github.com/sionirvine/calen</url>
