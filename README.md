@@ -132,7 +132,8 @@ The screenshots above come from a scratch folder with `--seed` (no real accounts
 builds, or with `CALEN_DEV=1`, `--flyout` opens the tray flyout and `--demo palette|editor`
 opens the palette or an event with photos (`--demo pick:+3`, `month-pick:-5` or
 `flyout-pick:+6` picks a date, `context:2` opens an event's right-click menu,
-`flyout-cycle` fades the flyout out and back, `restart` restarts, `editor-scroll` and
+`flyout-cycle` fades the flyout out and back, `connect:<next>` opens *Connect calendar*
+and `goa-pick:<next>` picks its first GNOME Online Accounts entry before running `<next>`, `restart` restarts, `editor-scroll` and
 `editor-wide` check the editor's notes and thumbnails); `scripts/shot.ps1`
 saves a Calen window to PNG.
 
@@ -192,6 +193,11 @@ or the binary. Debug builds also read `IMG_API_KEY` from `.env` for img.felixadr
 
 **CalDAV.** Click *Connect calendar* in the toolbar. For Nextcloud, use an app password
 (Settings → Security → Devices & sessions). Passwords are stored in the OS keyring.
+On GNOME, the dialog also lists Nextcloud and WebDAV accounts from Settings → Online
+Accounts: click *Use* to connect one without typing it in again. Calen copies the
+password once, so after changing it in GNOME, remove the account in Calen
+(`> Remove account: …`) and connect it again. Google and
+Microsoft accounts are listed but not supported yet (they sign in with OAuth).
 
 To run the end-to-end sync test against a server:
 

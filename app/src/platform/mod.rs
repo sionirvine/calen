@@ -22,6 +22,8 @@ mod other;
 #[cfg(not(any(windows, target_os = "linux")))]
 use self::other as os;
 
+#[cfg(target_os = "linux")]
+mod goa;
 pub mod icon;
 #[cfg(target_os = "linux")]
 pub mod search_provider;
@@ -330,4 +332,42 @@ pub fn autostart_enabled() -> bool {
         return true;
     }
     autolaunch().and_then(|a| a.is_enabled().ok()).unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// GNOME Online Accounts
+
+/// A calendar account set up in GNOME's Settings → Online Accounts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GoaAccount {
+    /// D-Bus object path, for fetching the password.
+    pub path: String,
+    /// "Nextcloud", "WebDAV", "Google"…
+    pub provider: String,
+    /// "you@cloud.example.com"
+    pub label: String,
+    /// CalDAV URL.
+    pub uri: String,
+    pub username: String,
+    /// Password-based (Calen's client can't do OAuth yet).
+    pub supported: bool,
+}
+
+/// Calendar accounts from GNOME Online Accounts (blocking; empty elsewhere).
+pub fn goa_accounts() -> Vec<GoaAccount> {
+    #[cfg(target_os = "linux")]
+    return goa::accounts();
+    #[cfg(not(target_os = "linux"))]
+    Vec::new()
+}
+
+/// The password GNOME Online Accounts keeps for an account (blocking).
+pub fn goa_password(path: &str) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    return goa::password(path);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        Err("GNOME Online Accounts is only available on Linux".into())
+    }
 }

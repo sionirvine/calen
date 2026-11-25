@@ -15,6 +15,15 @@
    Each update needs the new tag and commit, plus `cargo-sources.json` if `Cargo.lock`
    changed.
 
+## Permissions
+
+Each `--talk-name` in `finish-args` has a comment explaining it. If a reviewer asks
+about `org.gnome.OnlineAccounts`: Calen reads it only when you open *Connect calendar*.
+It lists accounts that have calendars switched on, and it asks GOA for a password only
+for the account you pick. That password goes into the desktop keyring
+(`org.freedesktop.secrets`), the same as an account entered by hand. Calen never reads
+other accounts' credentials or OAuth tokens.
+
 The local `flatpak-builder-lint repo` errors `appstream-external-screenshot-url` and
 `appstream-screenshots-not-mirrored-in-ostree` are expected. Flathub's builders mirror the
 screenshots themselves.

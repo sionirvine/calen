@@ -19,6 +19,8 @@ finish-args:
   - --talk-name=org.freedesktop.secrets
   # Hold reminders while a game is running
   - --talk-name=com.feralinteractive.GameMode
+  # Offer CalDAV accounts from GNOME Online Accounts in "Connect calendar"
+  - --talk-name=org.gnome.OnlineAccounts
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
   env:
