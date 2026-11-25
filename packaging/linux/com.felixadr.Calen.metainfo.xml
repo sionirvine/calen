@@ -59,6 +59,27 @@
     <control>keyboard</control>
   </supports>
   <releases>
+    <release version="0.1.9" date="2026-11-25">
+      <description>
+        <p>Event editor fixes for the CPU renderer.</p>
+        <ul>
+          <li>Scrolling long notes no longer leaves smeared text.</li>
+          <li>Image thumbnails no longer overlap and now have rounded corners.</li>
+          <li>Thumbnails of newly uploaded images appear right away, and failed thumbnail downloads are retried.</li>
+        </ul>
+      </description>
+    </release>
+    <release version="0.1.8" date="2026-11-20">
+      <description>
+        <p>Date formats, week start, and a right-click menu.</p>
+        <ul>
+          <li>New date format setting for day headings, with 15 styles.</li>
+          <li>Day view shows the full date in its header.</li>
+          <li>Right-click an event to edit or delete it.</li>
+          <li>New "Restart Calen" command in the palette.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.1.7" date="2026-11-19">
       <description>
         <p>First Flatpak release. Autostart uses the Background portal, and updates come from Flatpak.</p>
