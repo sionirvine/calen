@@ -395,13 +395,12 @@ impl Engine {
                     return;
                 }
 
-                let clip_mask = match physical_bounds.is_within(&clip_bounds) {
-                    true => None,
-                    false => {
-                        adjust_clip_mask(clip_mask, clip_bounds);
-                        Some(clip_mask as &_)
-                    }
-                };
+                // Calen patch: always clip. The editor draws its half-scrolled
+                // first and last lines in full, past its own bounds, so those
+                // bounds fitting the clip says nothing about the glyphs. Unclipped,
+                // they land outside the box and stay there as smears.
+                adjust_clip_mask(clip_mask, clip_bounds);
+                let clip_mask = Some(clip_mask as &_);
 
                 self.text_pipeline.draw_editor(
                     editor,
@@ -579,15 +578,38 @@ impl Engine {
     ) {
         match image {
             #[cfg(feature = "image")]
-            Image::Raster { image, bounds, .. } => {
+            Image::Raster {
+                image,
+                bounds,
+                clip_bounds: own_clip,
+            } => {
                 let physical_bounds = *bounds * _transformation;
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                // Calen patch: honour the image's own clip (the widget's bounds;
+                // `ContentFit::Cover` draws past them and relies on it) and its
+                // border radius, which applies to that clip. Unpatched, both were
+                // dropped: thumbnails spilled over their neighbours, square-cornered.
+                let Some(clip) =
+                    _clip_bounds.intersection(&(*own_clip * _transformation))
+                else {
+                    return;
+                };
+                if !clip.intersects(&physical_bounds) {
                     return;
                 }
+                let radius = <[f32; 4]>::from(image.border_radius);
+                let rounded = radius
+                    .iter()
+                    .any(|r| *r > 0.0)
+                    .then(|| own_clip.intersection(bounds))
+                    .flatten()
+                    .map(|shape| (shape, radius));
 
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let needs_mask = !physical_bounds.is_within(&clip);
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, clip);
+                }
+                let clip_mask = needs_mask.then_some(&*_clip_mask);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(image.rotation);
@@ -606,18 +628,36 @@ impl Engine {
                     _pixels,
                     transform,
                     clip_mask,
+                    rounded,
                 );
+
+                // Leave the mask as the layer's, for whatever is drawn next.
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, _clip_bounds);
+                }
             }
             #[cfg(feature = "svg")]
-            Image::Vector { svg, bounds, .. } => {
+            Image::Vector {
+                svg,
+                bounds,
+                clip_bounds: own_clip,
+            } => {
                 let physical_bounds = *bounds * _transformation;
 
-                if !_clip_bounds.intersects(&physical_bounds) {
+                // Calen patch: honour the SVG's own clip too (see above).
+                let Some(clip) =
+                    _clip_bounds.intersection(&(*own_clip * _transformation))
+                else {
+                    return;
+                };
+                if !clip.intersects(&physical_bounds) {
                     return;
                 }
-
-                let clip_mask = (!physical_bounds.is_within(&_clip_bounds))
-                    .then_some(_clip_mask as &_);
+                let needs_mask = !physical_bounds.is_within(&clip);
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, clip);
+                }
+                let clip_mask = needs_mask.then_some(&*_clip_mask);
 
                 let center = physical_bounds.center();
                 let radians = f32::from(svg.rotation);
@@ -637,6 +677,10 @@ impl Engine {
                     transform,
                     clip_mask,
                 );
+
+                if needs_mask {
+                    adjust_clip_mask(_clip_mask, _clip_bounds);
+                }
             }
             #[cfg(not(feature = "image"))]
             Image::Raster { .. } => {
@@ -682,7 +726,7 @@ fn into_transform(transformation: Transformation) -> tiny_skia::Transform {
     }
 }
 
-fn rounded_rectangle(
+pub(crate) fn rounded_rectangle(
     bounds: Rectangle,
     border_radius: [f32; 4],
 ) -> tiny_skia::Path {

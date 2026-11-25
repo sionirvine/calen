@@ -573,6 +573,7 @@ impl App {
             color: occ.color,
         });
         let editor = Editor::for_event(&ev, self.target_for(&occ), cal, self.settings.time_24h, self.settings.date_order);
+        self.images.forget_failures(editor.images.iter());
         let wanted = self.images.wanted(editor.images.iter());
         self.editor = Some(editor);
         self.quick = None;
@@ -899,6 +900,26 @@ impl App {
             Message::Demo(what) => match what.as_str() {
                 "palette" => return crate::palette::open(self, ">"),
                 "restart" => return crate::palette::run(self, crate::palette::Command::Restart),
+                // A new event with long notes, scrolled down and up (the notes box
+                // must not leave lines drawn outside itself).
+                "editor-scroll" => {
+                    let now = When::at_local(Local::now());
+                    let open = self.open_editor_new(now.clone(), now);
+                    if let Some(ed) = &mut self.editor {
+                        let lines: Vec<String> = (1..=14).map(|i| format!("line {i} of the notes")).collect();
+                        ed.notes = iced::widget::text_editor::Content::with_text(&lines.join("\n"));
+                    }
+                    let steps = (0..12).map(|i| {
+                        Task::perform(tokio::time::sleep(std::time::Duration::from_millis(1500 + i * 120)), move |_| {
+                            Message::Demo(format!("editor-scroll-step:{}", if (4..8).contains(&i) { -1 } else { 1 }))
+                        })
+                    });
+                    return Task::batch(std::iter::once(open).chain(steps));
+                }
+                w if w.starts_with("editor-scroll-step:") => {
+                    let lines = w["editor-scroll-step:".len()..].parse().unwrap_or(1);
+                    return self.on_editor(editor::Msg::Notes(iced::widget::text_editor::Action::Scroll { lines }));
+                }
                 // With `--flyout`: fade the flyout out, then open it again.
                 "flyout-cycle" => {
                     let close = crate::flyout::close(self);
@@ -909,9 +930,24 @@ impl App {
                 }
                 "bench" => return crate::bench::start_bench(self),
                 w if w.starts_with("shot:") => return crate::bench::shot(self, &w["shot:".len()..]),
-                "editor" => {
+                "editor" | "editor-wide" => {
                     if let Some(key) = self.occs.iter().find(|o| o.title.contains("photos")).map(|o| o.key.clone()) {
-                        return self.open_editor_for(&key);
+                        let open = self.open_editor_for(&key);
+                        if what == "editor-wide" {
+                            let later = Task::perform(tokio::time::sleep(std::time::Duration::from_secs(2)), |_| {
+                                Message::Demo("editor-wide-thumb".into())
+                            });
+                            return Task::batch([open, later]);
+                        }
+                        return open;
+                    }
+                }
+                // A wide stand-in for the first photo: Cover must crop it to its square.
+                "editor-wide-thumb" => {
+                    if let Some(url) = self.editor.as_ref().and_then(|e| e.images.first().cloned()) {
+                        let (w, h) = (240u32, 80u32);
+                        let px = (0..w * h).flat_map(|i| [((i % w) * 255 / w) as u8, 80, 200, 255]).collect();
+                        self.images.insert_rgba(url, w, h, px);
                     }
                 }
                 // `pick:+N` / `flyout-pick:+N`: pick the day N days from today, as a

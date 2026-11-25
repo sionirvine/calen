@@ -47,6 +47,7 @@ impl Pipeline {
         pixels: &mut tiny_skia::PixmapMut<'_>,
         transform: tiny_skia::Transform,
         clip_mask: Option<&tiny_skia::Mask>,
+        rounded: Option<(Rectangle, [f32; 4])>,
     ) {
         let mut cache = self.cache.borrow_mut();
 
@@ -57,12 +58,43 @@ impl Pipeline {
         let width_scale = bounds.width / image.width() as f32;
         let height_scale = bounds.height / image.height() as f32;
 
-        let transform = transform.pre_scale(width_scale, height_scale);
-
         let quality = match filter_method {
             raster::FilterMethod::Linear => tiny_skia::FilterQuality::Bilinear,
             raster::FilterMethod::Nearest => tiny_skia::FilterQuality::Nearest,
         };
+
+        // Calen patch: rounded corners. Fill the visible part's rounded shape
+        // with the image as a pattern (image pixels mapped onto `bounds`).
+        if let Some((shape, radius)) = rounded {
+            let pattern = tiny_skia::Pattern::new(
+                image,
+                tiny_skia::SpreadMode::Pad,
+                quality,
+                opacity,
+                tiny_skia::Transform::from_row(
+                    width_scale,
+                    0.0,
+                    0.0,
+                    height_scale,
+                    bounds.x,
+                    bounds.y,
+                ),
+            );
+            pixels.fill_path(
+                &crate::engine::rounded_rectangle(shape, radius),
+                &tiny_skia::Paint {
+                    shader: pattern,
+                    anti_alias: true,
+                    ..Default::default()
+                },
+                tiny_skia::FillRule::Winding,
+                transform,
+                clip_mask,
+            );
+            return;
+        }
+
+        let transform = transform.pre_scale(width_scale, height_scale);
 
         pixels.draw_pixmap(
             (bounds.x / width_scale) as i32,
