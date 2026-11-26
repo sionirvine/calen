@@ -81,6 +81,7 @@ pub fn detail(ev: &calen_core::Event, date: DateTime<Local>, time_24h: bool) -> 
 }
 
 /// The latest loaded data, for searches from outside the UI thread.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // read by the GNOME search provider
 pub struct Index {
     pub data: Arc<Data>,
     pub time_24h: bool,
@@ -95,6 +96,7 @@ pub fn publish(data: &Arc<Data>, time_24h: bool) {
     }
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // read by the GNOME search provider
 pub fn with_index<T>(f: impl FnOnce(&Index) -> T) -> Option<T> {
     INDEX.read().ok()?.as_ref().map(f)
 }
