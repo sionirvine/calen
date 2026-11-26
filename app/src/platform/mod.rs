@@ -23,6 +23,8 @@ mod other;
 use self::other as os;
 
 pub mod icon;
+#[cfg(target_os = "linux")]
+pub mod search_provider;
 pub mod instance;
 
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
@@ -49,6 +51,12 @@ pub enum PlatformEvent {
     SecondInstance,
     /// Calendar files to import (from the command line or another launch).
     OpenFiles(Vec<std::path::PathBuf>),
+    /// GNOME Shell search: open this event (its occurrence starting at `at`, unix seconds).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    OpenEvent { cal_id: String, uid: String, at: i64 },
+    /// GNOME Shell search: show all results for this query in Calen.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Search(String),
     /// A notification button/body was activated.
     Notification(NotificationAction),
     /// The OS refused to show a notification; show it in-app instead.
@@ -211,6 +219,23 @@ pub fn flyout_position(x: f64, y: f64, rect: Option<(f64, f64, f64, f64)>, size:
 
 pub fn early_init() {
     os::early_init();
+    #[cfg(target_os = "linux")]
+    if search_provider_installed() {
+        search_provider::start();
+    }
+}
+
+/// GNOME Shell only asks providers whose `.ini` is installed: the Flatpak's, or
+/// a system package's. Other builds (AppImage, `cargo run`) leave the bus name
+/// alone so they don't answer in place of an installed Calen.
+/// `CALEN_SEARCH_PROVIDER=1` serves it anyway (testing with `gdbus`).
+#[cfg(target_os = "linux")]
+fn search_provider_installed() -> bool {
+    sandboxed()
+        || std::env::var_os("CALEN_SEARCH_PROVIDER").is_some_and(|v| v == "1")
+        || ["/usr/share", "/usr/local/share"].iter().any(|d| {
+            std::path::Path::new(&format!("{d}/gnome-shell/search-providers/{APP_ID}.search-provider.ini")).exists()
+        })
 }
 
 // ---------------------------------------------------------------------------

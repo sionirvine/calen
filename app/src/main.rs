@@ -14,6 +14,7 @@ mod model;
 mod notify;
 mod palette;
 mod platform;
+mod search;
 mod seed;
 mod settings;
 mod storage;

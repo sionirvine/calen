@@ -63,6 +63,10 @@ A fast, native calendar for Windows and Linux (macOS planned), written in Rust w
   `text/calendar`), drop it on the window, or use `> Import .ics file…`. A dialog lists
   the events and the calendar they go to. An invite that's already in Calen updates it,
   and Ctrl+Z undoes the import. `calen invite.ics` hands the file to a running Calen.
+- **GNOME search.** Events show up when you type in Activities; pick one to open it in
+  Calen, or press Enter to see all results in Calen's palette. If Calen isn't running, the
+  search starts it in the tray. Turn it off under Settings → Search. This needs the
+  Flatpak (or a system package): GNOME doesn't load search providers from an AppImage.
 - **Meeting links.** Zoom, Google Meet and Teams links get a **Join** button.
 - **Map links.** A Google Maps link becomes a clickable place name. Calen saves it as
   standard `LOCATION` + `GEO` + `X-APPLE-STRUCTURED-LOCATION`, so iOS/macOS Calendar
@@ -141,6 +145,10 @@ For rendering work there are three more aids. They're also available in debug bu
 - `CALEN_PROFILE=1` logs any `update`, `view` or canvas paint that takes over 8 ms.
 
 Pick the renderer for a run with `ICED_BACKEND=tiny-skia` or `ICED_BACKEND=wgpu`.
+
+To try the GNOME search provider outside the Flatpak, run with `CALEN_SEARCH_PROVIDER=1`
+and query it with
+`gdbus call --session -d com.felixadr.Calen.SearchProvider -o /com/felixadr/Calen/SearchProvider -m org.gnome.Shell.SearchProvider2.GetInitialResultSet "['lunch']"`.
 
 `vendor/` holds patched copies of `iced_tiny_skia` and `iced_wgpu`. Each folder's
 `PATCHES.md` explains its changes: a faster CPU renderer, and a fix for missing canvas text

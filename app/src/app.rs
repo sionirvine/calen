@@ -114,7 +114,7 @@ struct UndoEntry {
 
 pub struct App {
     pub store: Store,
-    pub data: Data,
+    pub data: std::sync::Arc<Data>,
     pub settings: Settings,
     pub main_window: Option<window::Id>,
     pub main_visible: bool,
@@ -186,7 +186,7 @@ impl App {
         let today = Local::now().date_naive();
         let mut app = App {
             store,
-            data,
+            data: std::sync::Arc::new(data),
             view: settings.view,
             settings,
             main_window: None,
@@ -228,6 +228,7 @@ impl App {
             main_size: iced::Size::new(1100.0, 720.0),
         };
         app.refresh_occurrences(true);
+        crate::search::publish(&app.data, app.settings.time_24h);
         let task = if !flags.open_files.is_empty() {
             app.update(Message::Import(crate::import::ImportMsg::Open(flags.open_files)))
         } else if flags.start_minimized {
@@ -373,7 +374,8 @@ impl App {
     }
 
     pub fn reload(&mut self) {
-        self.data = Data::load(&self.store);
+        self.data = std::sync::Arc::new(Data::load(&self.store));
+        crate::search::publish(&self.data, self.settings.time_24h);
         self.refresh_occurrences(true);
         if let Some(sel) = &self.selected
             && !self.occs.iter().any(|o| &o.key == sel)
@@ -422,6 +424,7 @@ impl App {
 
     pub fn save_settings(&self) {
         crate::platform::set_clock_prefs(self.settings.time_24h, self.settings.date_format.month_first());
+        crate::search::publish(&self.data, self.settings.time_24h);
         if let Err(e) = self.store.set_setting(Settings::KEY, &self.settings) {
             log::error!("saving settings: {e}");
         }
@@ -1008,6 +1011,22 @@ impl App {
         match e {
             PlatformEvent::TrayClick { x, y, rect } => return crate::flyout::toggle(self, x, y, rect),
             PlatformEvent::SecondInstance => return self.update(Message::ShowMain),
+            PlatformEvent::OpenEvent { cal_id, uid, at } => {
+                if let Some(start) = DateTime::from_timestamp(at, 0).map(|t| t.with_timezone(&Local)) {
+                    self.jump_to(start.date_naive());
+                    let matching = |o: &&Occ| o.key.cal_id == cal_id && o.key.uid == uid;
+                    let occ = self
+                        .occs
+                        .iter()
+                        .filter(matching)
+                        .min_by_key(|o| (o.start - start).num_seconds().abs())
+                        .map(|o| o.key.clone());
+                    self.selected = occ;
+                    return Task::batch([self.update(Message::ShowMain), scroll_to_time(start)]);
+                }
+                return self.update(Message::ShowMain);
+            }
+            PlatformEvent::Search(query) => return crate::palette::open(self, &query),
             PlatformEvent::OpenFiles(files) => return self.update(Message::Import(crate::import::ImportMsg::Open(files))),
             PlatformEvent::Menu(MenuAction::Open) => return self.update(Message::ShowMain),
             PlatformEvent::Menu(MenuAction::NewEvent) => {

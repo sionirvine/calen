@@ -235,58 +235,10 @@ fn items(app: &App, st: &PaletteState) -> Vec<Item> {
         return scored.into_iter().take(MAX_RESULTS).map(|(_, _, cmd, title, detail)| Item::Cmd { cmd, title, detail }).collect();
     }
 
-    let q = st.query.trim();
-    let now = Local::now();
-    let pat = Pattern::parse(q, CaseMatching::Ignore, Normalization::Smart);
-    let mut found: Vec<(u32, i64, Item)> = Vec::new();
-    for ((cal_id, uid), (_, obj)) in &app.data.objects {
-        let Some(cal) = app.data.calendar(cal_id) else { continue };
-        let Some(master) = obj.master() else { continue };
-        let (notes, _) = calen_core::notes::split(&master.description);
-        let title = if master.summary.is_empty() { "(No title)".to_string() } else { master.summary.clone() };
-        let score = if q.is_empty() {
-            0
-        } else {
-            let t = pat.score(Utf32Str::new(&title, &mut buf), &mut matcher).map(|s| s * 3);
-            let l = pat.score(Utf32Str::new(&master.location, &mut buf), &mut matcher);
-            let n = pat.score(Utf32Str::new(&notes, &mut buf), &mut matcher).map(|s| s / 2);
-            match t.max(l).max(n) {
-                Some(s) => s,
-                None => continue,
-            }
-        };
-        // Representative date: next occurrence, else the most recent one.
-        let next = calen_core::expand(obj, now - Duration::hours(1), now + Duration::days(400)).into_iter().next();
-        let (date, idx, rid) = match next {
-            Some(o) => (o.start, o.event_index, o.recurrence_id),
-            None => (master.start.local(), 0, None),
-        };
-        if q.is_empty() && date < now {
-            continue; // empty query → upcoming only
-        }
-        let detail = format!(
-            "{}{}{}",
-            date.format("%a %-d %b %Y"),
-            if master.all_day() { String::new() } else { format!(" · {}", crate::views::grid::fmt_time(date, app.settings.time_24h)) },
-            if master.location.is_empty() { String::new() } else { format!(" · {}", calen_core::notes::display_location(master)) }
-        );
-        let _ = idx;
-        let distance = (date - now).num_minutes();
-        let rank = if distance >= 0 { distance } else { 1_000_000 + distance.abs() };
-        found.push((
-            score,
-            rank,
-            Item::Event {
-                key: OccKey { cal_id: cal_id.clone(), uid: uid.clone(), instance: rid.as_ref().map(|r| r.key()) },
-                date,
-                title,
-                detail,
-                color: theme::parse_hex(&cal.color).unwrap_or(iced::Color::from_rgb8(0x4f, 0x8c, 0xff)),
-            },
-        ));
-    }
-    found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-    found.into_iter().take(MAX_RESULTS).map(|(_, _, i)| i).collect()
+    crate::search::search_events(&app.data, &st.query, app.settings.time_24h, MAX_RESULTS)
+        .into_iter()
+        .map(|h| Item::Event { key: h.key, date: h.date, title: h.title, detail: h.detail, color: h.color })
+        .collect()
 }
 
 pub fn update(app: &mut App, m: Msg) -> Task<Message> {
