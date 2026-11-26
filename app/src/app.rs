@@ -946,6 +946,19 @@ impl App {
                 }
                 "bench" => return crate::bench::start_bench(self),
                 w if w.starts_with("shot:") => return crate::bench::shot(self, &w["shot:".len()..]),
+                // `connect:<next>` opens the Connect calendar dialog, `goa-pick:<next>`
+                // picks its first GNOME Online Accounts entry; then `<next>` runs.
+                w if w.starts_with("connect:") || w.starts_with("goa-pick:") => {
+                    let (first, next) = w.split_once(':').unwrap();
+                    let task = if first == "connect" {
+                        self.update(Message::Sync(crate::sync_hook::SyncMsg::OpenDialog))
+                    } else {
+                        self.update(Message::Sync(crate::sync_hook::SyncMsg::GoaPick(0)))
+                    };
+                    let next = next.to_string();
+                    let later = Task::perform(tokio::time::sleep(std::time::Duration::from_millis(1500)), move |_| Message::Demo(next.clone()));
+                    return Task::batch([task, later]);
+                }
                 "editor" | "editor-wide" => {
                     if let Some(key) = self.occs.iter().find(|o| o.title.contains("photos")).map(|o| o.key.clone()) {
                         let open = self.open_editor_for(&key);

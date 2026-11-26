@@ -113,6 +113,8 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
         (Command::ToggleSidebar, "Toggle sidebar".into(), String::new()),
         (Command::SyncNow, "Sync now".into(), String::new()),
         (Command::AddAccount, "Add CalDAV account…".into(), "Nextcloud, Fastmail, iCloud…".into()),
+        #[cfg(target_os = "linux")]
+        (Command::AddAccount, "Import from GNOME Online Accounts…".into(), "Nextcloud and WebDAV accounts".into()),
         (Command::ImportFile, "Import .ics file…".into(), "Invites and calendar exports".into()),
         (Command::Theme(ThemeChoice::System), "Theme: System".into(), current(s.theme == ThemeChoice::System)),
         (Command::Theme(ThemeChoice::Dark), "Theme: Dark".into(), current(s.theme == ThemeChoice::Dark)),

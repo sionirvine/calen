@@ -58,6 +58,8 @@ pub struct AccountDialog {
     pub pass: String,
     pub busy: bool,
     pub error: Option<String>,
+    /// Accounts from GNOME Online Accounts that aren't in Calen yet.
+    pub goa: Vec<crate::platform::GoaAccount>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,10 @@ pub enum SyncMsg {
     Pass(String),
     Connect,
     Tested(Result<usize, String>),
+    GoaListed(Vec<crate::platform::GoaAccount>),
+    /// Use this GNOME Online Accounts account (index into `AccountDialog::goa`).
+    GoaPick(usize),
+    GoaPassword(Result<String, String>),
     CloseDialog,
 }
 
@@ -189,7 +195,45 @@ pub fn update(app: &mut App, msg: SyncMsg) -> Task<Message> {
         }
         SyncMsg::OpenDialog => {
             app.sync.dialog = Some(AccountDialog::default());
-            return iced::widget::operation::focus("acct-url");
+            let goa = Task::perform(
+                async { tokio::task::spawn_blocking(crate::platform::goa_accounts).await.unwrap_or_default() },
+                |a| Message::Sync(SyncMsg::GoaListed(a)),
+            );
+            return Task::batch([iced::widget::operation::focus("acct-url"), goa]);
+        }
+        SyncMsg::GoaListed(list) => {
+            let known = app.store.accounts().unwrap_or_default();
+            if let Some(d) = &mut app.sync.dialog {
+                d.goa = list
+                    .into_iter()
+                    .filter(|g| !known.iter().any(|a| a.url == normalize_url(&g.uri) && a.username == g.username))
+                    .collect();
+            }
+        }
+        SyncMsg::GoaPick(i) => {
+            let Some(d) = &mut app.sync.dialog else { return Task::none() };
+            let Some(g) = d.goa.get(i).filter(|g| g.supported).cloned() else { return Task::none() };
+            d.url = g.uri.clone();
+            d.user = g.username.clone();
+            d.pass.clear();
+            d.busy = true;
+            d.error = None;
+            return Task::perform(
+                async move { tokio::task::spawn_blocking(move || crate::platform::goa_password(&g.path)).await.map_err(|e| e.to_string())? },
+                |r| Message::Sync(SyncMsg::GoaPassword(r)),
+            );
+        }
+        SyncMsg::GoaPassword(r) => {
+            let Some(d) = &mut app.sync.dialog else { return Task::none() };
+            d.busy = false;
+            match r {
+                Ok(pass) if !pass.is_empty() => {
+                    d.pass = pass;
+                    return update(app, SyncMsg::Connect);
+                }
+                Ok(_) => d.error = Some("GNOME Online Accounts has no password for this account".into()),
+                Err(e) => d.error = Some(format!("Couldn't get the password from GNOME Online Accounts: {e}")),
+            }
         }
         SyncMsg::Url(s) => with_dialog(app, |d| d.url = s),
         SyncMsg::User(s) => with_dialog(app, |d| d.user = s),
@@ -401,11 +445,33 @@ pub fn dialog<'a>(app: &'a App, p: Palette) -> Option<Element<'a, Message>> {
             let b = button(text(if d.busy { "Connecting…" } else { "Connect" }).size(13)).style(theme::primary).padding([6, 14]);
             if d.busy { b } else { b.on_press(Message::Sync(SyncMsg::Connect)) }
         });
+    // Zero height (no GOA accounts) leaves the column without it, gap included.
+    let mut goa = column![].spacing(6).height(if d.goa.is_empty() { Length::Fixed(0.0) } else { Length::Shrink });
+    if !d.goa.is_empty() {
+        goa = goa.push(text("From GNOME Online Accounts").size(12).color(p.muted));
+        for (i, g) in d.goa.iter().enumerate() {
+            let label = if g.label.is_empty() { g.username.clone() } else { g.label.clone() };
+            let line = row![
+                text(g.provider.clone()).size(13).font(BOLD).color(if g.supported { p.text } else { p.muted }),
+                text(label).size(13).color(p.muted).width(Length::Fill),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            goa = goa.push(if g.supported {
+                let b = button(line.push(text("Use").size(12).color(p.today))).style(theme::ghost).padding([6, 8]).width(Length::Fill);
+                if d.busy { b } else { b.on_press(Message::Sync(SyncMsg::GoaPick(i))) }
+            } else {
+                button(line.push(text("Not supported yet").size(12).color(p.muted))).style(theme::ghost).padding([6, 8]).width(Length::Fill)
+            });
+        }
+        goa = goa.push(text("Or enter a server:").size(12).color(p.muted));
+    }
     Some(
         container(
             column![
                 text("Connect a CalDAV account").size(17).font(BOLD),
                 text("For Nextcloud, create an app password under Settings → Security → Devices & sessions.").size(12).color(p.muted),
+                goa,
                 field("Server", "cloud.example.com", &d.url, SyncMsg::Url, false, "acct-url"),
                 field("Username", "you", &d.user, SyncMsg::User, false, "acct-user"),
                 field("App password", "xxxxx-xxxxx-xxxxx-xxxxx-xxxxx", &d.pass, SyncMsg::Pass, true, "acct-pass"),
