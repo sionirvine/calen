@@ -9,6 +9,7 @@ mod flyout;
 mod icons;
 mod image_tasks;
 mod images;
+mod import;
 mod model;
 mod notify;
 mod palette;
@@ -105,7 +106,8 @@ fn main() -> iced::Result {
         platform::icon::export(&dir).expect("export icons");
         return Ok(());
     }
-    let start_minimized = std::env::args().any(|a| a == "--minimized");
+    let open_files = platform::instance::files_from_args(&args);
+    let start_minimized = open_files.is_empty() && args.iter().any(|a| a == "--minimized");
     let data_dir = std::env::var_os("CALEN_DATA_DIR")
         .map(std::path::PathBuf::from)
         .or_else(|| directories::ProjectDirs::from("com", "felixadr", "Calen").map(|d| d.data_dir().to_path_buf()))
@@ -113,7 +115,7 @@ fn main() -> iced::Result {
     let _ = std::fs::create_dir_all(&data_dir);
     choose_renderer(&data_dir);
 
-    if !platform::instance::acquire(&data_dir) {
+    if !platform::instance::acquire(&data_dir, &open_files) {
         log::info!("Calen is already running; asked it to show itself");
         return Ok(());
     }
@@ -123,7 +125,7 @@ fn main() -> iced::Result {
         return Ok(());
     }
 
-    let flags = std::sync::Mutex::new(Some(Flags { start_minimized, data_dir }));
+    let flags = std::sync::Mutex::new(Some(Flags { start_minimized, data_dir, open_files }));
     iced::daemon(move || App::boot(flags.lock().unwrap().take().expect("boot once")), update, view)
         .title(App::title)
         .theme(App::theme)

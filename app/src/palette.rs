@@ -43,6 +43,7 @@ pub enum Command {
     ToggleCalendar(String, bool),
     SyncNow,
     AddAccount,
+    ImportFile,
     RemoveAccount(i64),
     ImageStorage,
     ImageUploadsOff,
@@ -112,6 +113,7 @@ fn commands(app: &App) -> Vec<(Command, String, String)> {
         (Command::ToggleSidebar, "Toggle sidebar".into(), String::new()),
         (Command::SyncNow, "Sync now".into(), String::new()),
         (Command::AddAccount, "Add CalDAV account…".into(), "Nextcloud, Fastmail, iCloud…".into()),
+        (Command::ImportFile, "Import .ics file…".into(), "Invites and calendar exports".into()),
         (Command::Theme(ThemeChoice::System), "Theme: System".into(), current(s.theme == ThemeChoice::System)),
         (Command::Theme(ThemeChoice::Dark), "Theme: Dark".into(), current(s.theme == ThemeChoice::Dark)),
         (Command::Theme(ThemeChoice::Light), "Theme: Light".into(), current(s.theme == ThemeChoice::Light)),
@@ -415,6 +417,7 @@ pub fn run(app: &mut App, cmd: Command) -> Task<Message> {
         Command::Today => task = Task::done(Message::Today),
         Command::View(v) => task = Task::done(Message::SetView(v)),
         Command::ToggleSidebar => task = Task::done(Message::ToggleSidebar),
+        Command::ImportFile => return crate::import::pick(),
         Command::Shortcuts => {
             app.show_shortcuts = true;
         }

@@ -428,6 +428,74 @@ impl CalendarObject {
         }
         cal.to_ics()
     }
+
+    /// The object as it was read, without re-stamping its events (DTSTAMP,
+    /// SEQUENCE). Use this to store imported data unchanged.
+    pub fn original_ics(&self) -> String {
+        self.calendar.to_ics()
+    }
+
+    /// Split an `.ics` file (an invite, an export) into one object per UID,
+    /// as a CalDAV collection stores them. Each object gets the VTIMEZONEs its
+    /// events use. `METHOD` is dropped: servers refuse stored objects with it
+    /// (RFC 4791 §4.1). Events without a UID get one; unusable ones are skipped.
+    pub fn split_import(ics_text: &str) -> Result<Vec<CalendarObject>, ics::IcsError> {
+        let root = ics::parse(ics_text)?;
+        let mut groups: Vec<(String, Vec<Component>)> = Vec::new();
+        for c in root.children_named("VEVENT") {
+            let mut c = c.clone();
+            let uid = match c.text("UID").filter(|u| !u.trim().is_empty()) {
+                Some(u) => u,
+                None => {
+                    let u = format!("{}@calen", uuid::Uuid::new_v4());
+                    c.set(Property::new("UID", u.clone()));
+                    u
+                }
+            };
+            match groups.iter_mut().find(|(u, _)| *u == uid) {
+                Some((_, list)) => list.push(c),
+                None => groups.push((uid, vec![c])),
+            }
+        }
+        let timezones: Vec<&Component> = root.children_named("VTIMEZONE").collect();
+        let mut out = Vec::new();
+        for (_, events) in groups {
+            let mut tzids: Vec<String> = Vec::new();
+            for e in &events {
+                collect_tzids(e, &mut tzids);
+            }
+            let mut cal = Component::new("VCALENDAR");
+            cal.props = root.props.iter().filter(|p| p.name != "METHOD").cloned().collect();
+            if cal.prop("VERSION").is_none() {
+                cal.props.insert(0, Property::new("VERSION", "2.0"));
+            }
+            if cal.prop("PRODID").is_none() {
+                cal.props.push(Property::new("PRODID", PRODID));
+            }
+            cal.children.extend(
+                timezones.iter().filter(|tz| tz.text("TZID").is_some_and(|id| tzids.contains(&id))).map(|tz| (*tz).clone()),
+            );
+            cal.children.extend(events);
+            let obj = CalendarObject::parse(&cal.to_ics())?;
+            if !obj.events.is_empty() {
+                out.push(obj);
+            }
+        }
+        Ok(out)
+    }
+}
+
+fn collect_tzids(c: &Component, out: &mut Vec<String>) {
+    for p in &c.props {
+        if let Some(id) = p.param("TZID")
+            && !out.iter().any(|t| t == id)
+        {
+            out.push(id.to_string());
+        }
+    }
+    for child in &c.children {
+        collect_tzids(child, out);
+    }
 }
 
 #[cfg(test)]
@@ -460,6 +528,49 @@ mod tests {
         assert!(out.contains("DTEND;TZID=Europe/Berlin:20241015T093000"));
         let again = CalendarObject::parse(&out).unwrap();
         assert_eq!(again.master().unwrap().alarms, vec![10]);
+    }
+
+    const INVITE: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Mailer//EN\r\nMETHOD:REQUEST\r\n\
+        BEGIN:VTIMEZONE\r\nTZID:Europe/Berlin\r\nEND:VTIMEZONE\r\nBEGIN:VTIMEZONE\r\nTZID:America/New_York\r\nEND:VTIMEZONE\r\n\
+        BEGIN:VEVENT\r\nUID:weekly\r\nSUMMARY:Sync\r\nSEQUENCE:4\r\nORGANIZER:mailto:a@example.com\r\nDTSTART;TZID=Europe/Berlin:20241014T100000\r\nDURATION:PT30M\r\nRRULE:FREQ=WEEKLY\r\nEND:VEVENT\r\n\
+        BEGIN:VEVENT\r\nUID:other\r\nSUMMARY:Lunch\r\nDTSTART:20241015T120000Z\r\nDTEND:20241015T130000Z\r\nEND:VEVENT\r\n\
+        BEGIN:VEVENT\r\nUID:weekly\r\nRECURRENCE-ID;TZID=Europe/Berlin:20241021T100000\r\nSUMMARY:Sync (moved)\r\nDTSTART;TZID=Europe/Berlin:20241021T110000\r\nDURATION:PT30M\r\nEND:VEVENT\r\n\
+        BEGIN:VEVENT\r\nSUMMARY:No uid\r\nDTSTART;VALUE=DATE:20241020\r\nEND:VEVENT\r\n\
+        BEGIN:VEVENT\r\nUID:broken\r\nSUMMARY:No start\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn split_import_groups_by_uid() {
+        let objs = CalendarObject::split_import(INVITE).unwrap();
+        assert_eq!(objs.len(), 3, "weekly, other, no-uid; the event without DTSTART is skipped");
+        let weekly = &objs[0];
+        assert_eq!(weekly.uid(), "weekly");
+        assert_eq!(weekly.events.len(), 2, "master and override stay together");
+        assert_eq!(weekly.master().unwrap().summary, "Sync");
+        assert_eq!(objs[1].uid(), "other");
+        assert!(objs[2].uid().ends_with("@calen"));
+    }
+
+    #[test]
+    fn split_import_cleans_up_each_object() {
+        let objs = CalendarObject::split_import(INVITE).unwrap();
+        let weekly = objs[0].original_ics();
+        assert!(!weekly.contains("METHOD"));
+        assert!(weekly.contains("TZID:Europe/Berlin"));
+        assert!(!weekly.contains("America/New_York"), "only the zones the object uses");
+        assert!(weekly.contains("SEQUENCE:4"), "stored as received");
+        assert!(weekly.contains("ORGANIZER:mailto:a@example.com"));
+        let other = objs[1].original_ics();
+        assert!(!other.contains("VTIMEZONE"));
+        assert!(other.contains("PRODID:-//Mailer//EN"));
+    }
+
+    #[test]
+    fn split_import_single_event() {
+        let src = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTART;VALUE=DATE:20241024\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let objs = CalendarObject::split_import(src).unwrap();
+        assert_eq!(objs.len(), 1);
+        assert!(objs[0].original_ics().contains("VERSION:2.0"));
+        assert!(CalendarObject::split_import("not a calendar").is_err());
     }
 
     #[test]

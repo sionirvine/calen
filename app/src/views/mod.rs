@@ -267,6 +267,9 @@ fn main_window(app: &App) -> Element<'_, Message> {
     if let Some(el) = crate::storage::view(app, p) {
         layers.push(modal(el, Message::Storage(crate::storage::StorageMsg::Close), true));
     }
+    if let Some(el) = crate::import::view(app, p) {
+        layers.push(modal(el, Message::Import(crate::import::ImportMsg::Close), true));
+    }
     if let Some(el) = crate::sync_hook::dialog(app, p) {
         layers.push(modal(el, Message::Sync(crate::sync_hook::SyncMsg::CloseDialog), true));
     }

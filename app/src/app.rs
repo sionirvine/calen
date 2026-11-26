@@ -70,6 +70,7 @@ pub enum Message {
     FlyoutFocus(window::Id, u32),
     Popup(crate::alert_popup::PopupMsg),
     Storage(crate::storage::StorageMsg),
+    Import(crate::import::ImportMsg),
     ScrollMorning,
     CloseShortcuts,
     // windows
@@ -151,6 +152,7 @@ pub struct App {
     pub updater: crate::updater::UpdaterState,
     pub viewer: Option<crate::viewer::Viewer>,
     pub storage: Option<crate::storage::StorageDialog>,
+    pub import: Option<crate::import::ImportDialog>,
     /// Drawn grid layers, kept across repaints that don't change them.
     pub grid_caches: crate::views::grid::GridCaches,
     /// The left pane's week list.
@@ -164,6 +166,8 @@ pub struct App {
 
 pub struct Flags {
     pub start_minimized: bool,
+    /// Calendar files to import at start (`calen invite.ics`).
+    pub open_files: Vec<PathBuf>,
     pub data_dir: PathBuf,
 }
 
@@ -216,6 +220,7 @@ impl App {
             updater: Default::default(),
             viewer: None,
             storage: None,
+            import: None,
             grid_caches: Default::default(),
             side_pane: Default::default(),
             context_at: std::cell::Cell::new(iced::Point::ORIGIN),
@@ -223,7 +228,13 @@ impl App {
             main_size: iced::Size::new(1100.0, 720.0),
         };
         app.refresh_occurrences(true);
-        let task = if flags.start_minimized { Task::none() } else { app.open_main() };
+        let task = if !flags.open_files.is_empty() {
+            app.update(Message::Import(crate::import::ImportMsg::Open(flags.open_files)))
+        } else if flags.start_minimized {
+            Task::none()
+        } else {
+            app.open_main()
+        };
         let sync = crate::sync_hook::boot(&mut app);
         crate::platform::set_clock_prefs(app.settings.time_24h, app.settings.date_format.month_first());
         crate::platform::init_tray(app.settings.dnd_active(chrono::Utc::now().timestamp()));
@@ -383,7 +394,7 @@ impl App {
             .collect()
     }
 
-    fn default_calendar(&self) -> CalChoice {
+    pub(crate) fn default_calendar(&self) -> CalChoice {
         let choices = self.calendar_choices();
         self.settings
             .default_calendar
@@ -426,12 +437,12 @@ impl App {
         }
     }
 
-    fn snapshot(&self, cal_id: &str, uid: &str) -> (String, String, Option<String>) {
+    pub(crate) fn snapshot(&self, cal_id: &str, uid: &str) -> (String, String, Option<String>) {
         let prev = self.store.object(cal_id, uid).ok().flatten().map(|r| r.ics);
         (cal_id.to_string(), uid.to_string(), prev)
     }
 
-    fn push_undo(&mut self, label: impl Into<String>, snapshots: Vec<(String, String, Option<String>)>) {
+    pub(crate) fn push_undo(&mut self, label: impl Into<String>, snapshots: Vec<(String, String, Option<String>)>) {
         self.undo.push(UndoEntry { label: label.into(), snapshots });
         if self.undo.len() > 50 {
             self.undo.remove(0);
@@ -506,7 +517,7 @@ impl App {
         }
     }
 
-    fn after_local_change(&mut self) {
+    pub(crate) fn after_local_change(&mut self) {
         self.reload();
         crate::sync_hook::local_changed(self);
     }
@@ -643,7 +654,7 @@ impl App {
         }
     }
 
-    fn select_uid(&mut self, cal_id: &str, uid: &str) {
+    pub(crate) fn select_uid(&mut self, cal_id: &str, uid: &str) {
         self.selected = self.occs.iter().find(|o| o.key.cal_id == cal_id && o.key.uid == uid).map(|o| o.key.clone());
     }
 
@@ -811,6 +822,7 @@ impl App {
                 let closed = self.context_menu.take().is_some()
                     || std::mem::take(&mut self.show_shortcuts)
                     || self.storage.take().is_some()
+                    || self.import.take().is_some()
                     || self.sync.dialog.take().is_some()
                     || self.scope_prompt.take().is_some()
                     || self.editor.take().is_some()
@@ -858,6 +870,7 @@ impl App {
             Message::Images(m) => return crate::image_tasks::update(self, m),
             Message::Viewer(m) => return crate::viewer::update(self, m),
             Message::Storage(m) => return crate::storage::update(self, m),
+            Message::Import(m) => return crate::import::update(self, m),
             Message::FlyoutNew => {
                 let close = crate::flyout::close(self);
                 return Task::batch([close, self.open_quick_add(None)]);
@@ -995,6 +1008,7 @@ impl App {
         match e {
             PlatformEvent::TrayClick { x, y, rect } => return crate::flyout::toggle(self, x, y, rect),
             PlatformEvent::SecondInstance => return self.update(Message::ShowMain),
+            PlatformEvent::OpenFiles(files) => return self.update(Message::Import(crate::import::ImportMsg::Open(files))),
             PlatformEvent::Menu(MenuAction::Open) => return self.update(Message::ShowMain),
             PlatformEvent::Menu(MenuAction::NewEvent) => {
                 let close = crate::flyout::close(self);
@@ -1029,6 +1043,9 @@ impl App {
             window::Event::FilesHoveredLeft if Some(id) == self.main_window => self.drop_hover = false,
             window::Event::FileDropped(path) if Some(id) == self.main_window => {
                 self.drop_hover = false;
+                if crate::import::is_calendar_file(&path) {
+                    return self.update(Message::Import(crate::import::ImportMsg::Open(vec![path])));
+                }
                 return crate::image_tasks::files_dropped(self, vec![path]);
             }
             window::Event::Unfocused => return crate::flyout::unfocused(self, id),
