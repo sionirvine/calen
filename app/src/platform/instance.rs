@@ -74,13 +74,20 @@ pub fn files_from_args(args: &[String]) -> Vec<PathBuf> {
             Some(rest) => {
                 // file:///path or file://localhost/path
                 let path = rest.strip_prefix("localhost").unwrap_or(rest);
-                path.starts_with('/').then(|| PathBuf::from(percent_decode(path)))
+                path.starts_with('/').then(|| PathBuf::from(uri_path(&percent_decode(path))))
             }
             None if is_calendar_file(a) && !a.contains("://") => Some(PathBuf::from(a)),
             None => None,
         })
         .map(|p| std::path::absolute(&p).unwrap_or(p))
         .collect()
+}
+
+/// The local path of a `file://` URI's path part. On Windows, `/C:/x.ics`
+/// is `C:/x.ics` (Windows accepts `/` as a separator).
+fn uri_path(path: &str) -> &str {
+    let b = path.as_bytes();
+    if cfg!(windows) && b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' { &path[1..] } else { path }
 }
 
 pub fn is_calendar_file(path: &str) -> bool {
@@ -111,17 +118,36 @@ fn percent_decode(s: &str) -> String {
 mod tests {
     use super::*;
 
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// What the function makes of a path: absolute in the platform's terms
+    /// (on Windows, `/tmp/a.ics` is on the current drive).
+    fn abs(p: &str) -> PathBuf {
+        std::path::absolute(p).unwrap()
+    }
+
     #[test]
     fn args_to_files() {
-        let args: Vec<String> =
-            ["calen", "--minimized", "--demo", "shot:week:/tmp/w.png", "/tmp/a b.ics", "file:///tmp/inv%20ite.ics", "file://localhost/x.ics", "https://e.com/c.ics"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-        assert_eq!(
-            files_from_args(&args),
-            vec![PathBuf::from("/tmp/a b.ics"), PathBuf::from("/tmp/inv ite.ics"), PathBuf::from("/x.ics")]
-        );
+        let a = args(&[
+            "calen",
+            "--minimized",
+            "--demo",
+            "shot:week:/tmp/w.png",
+            "/tmp/a b.ics",
+            "file:///tmp/inv%20ite.ics",
+            "file://localhost/x.ics",
+            "https://e.com/c.ics",
+        ]);
+        assert_eq!(files_from_args(&a), vec![abs("/tmp/a b.ics"), abs("/tmp/inv ite.ics"), abs("/x.ics")]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_uris() {
+        let a = args(&["calen", "file:///C:/Users/Sam/My%20invite.ics"]);
+        assert_eq!(files_from_args(&a), vec![PathBuf::from(r"C:\Users\Sam\My invite.ics")]);
     }
 
     #[test]
